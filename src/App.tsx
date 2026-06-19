@@ -11,6 +11,7 @@ import AuditLogs from '@/pages/AuditLogs'
 import Operators from '@/pages/Operators'
 import Settings from '@/pages/Settings'
 import StartupError from '@/pages/StartupError'
+import StartupWizard from '@/pages/StartupWizard'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const operator = useOperatorStore((s) => s.operator)
@@ -21,26 +22,51 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 function StartupGate({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true)
   const [hasError, setHasError] = useState(false)
+  const [showWizard, setShowWizard] = useState(false)
   const loc = useLocation()
 
   useEffect(() => {
     const isElectron = typeof window !== 'undefined' && !!window.electronAPI
     const params = new URLSearchParams(window.location.search)
+
+    if (params.get('wizard') === '1') {
+      setShowWizard(true)
+      setChecking(false)
+      return
+    }
+
     if (params.get('startup_error') === '1' || loc.pathname === '/startup-error') {
       setHasError(true)
       setChecking(false)
       return
     }
+
     if (!isElectron) {
       setChecking(false)
       return
     }
-    window.electronAPI!.getBackendStatus().then((s) => {
-      if (s.error) {
-        setHasError(true)
+
+    const checkStatus = async () => {
+      try {
+        const needWizard = await window.electronAPI!.wizardCheckNeed()
+        if (needWizard.need) {
+          setShowWizard(true)
+          setChecking(false)
+          return
+        }
+
+        const s = await window.electronAPI!.getBackendStatus()
+        if (s.error) {
+          setHasError(true)
+        }
+      } catch {
+        // ignore
       }
       setChecking(false)
-    }).catch(() => setChecking(false))
+    }
+
+    checkStatus()
+
     const unsub = window.electronAPI!.onBackendError(() => setHasError(true))
     const unsubReady = window.electronAPI!.onBackendReady(() => {
       setHasError(false)
@@ -48,6 +74,7 @@ function StartupGate({ children }: { children: React.ReactNode }) {
     return () => { unsub(); unsubReady() }
   }, [])
 
+  if (showWizard) return <StartupWizard />
   if (hasError) return <StartupError />
   if (checking) return <div className="flex items-center justify-center h-screen text-gray-400">正在启动服务...</div>
   return <>{children}</>
@@ -58,6 +85,7 @@ export default function App() {
     <Router>
       <StartupGate>
         <Routes>
+          <Route path="/startup-wizard" element={<StartupWizard />} />
           <Route path="/startup-error" element={<StartupError />} />
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<PrivateRoute><Layout /></PrivateRoute>}>

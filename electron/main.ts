@@ -11,6 +11,7 @@ import * as net from 'net'
 import * as fs from 'fs'
 import * as path from 'path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import * as wizard from './wizard.js'
 
 interface AppConfig {
   dataDir: string
@@ -168,7 +169,10 @@ function createWindow() {
     })
   }
 
-  if (backendReady) {
+  const wizardState = wizard.getWizardState()
+  if (wizardState.active) {
+    loadWizardPage()
+  } else if (backendReady) {
     tryLoad()
   } else if (backendError) {
     loadErrorPage()
@@ -182,6 +186,16 @@ function loadErrorPage() {
   const htmlPath = path.join(__dirname, '..', 'dist', 'index.html')
   if (fs.existsSync(htmlPath)) {
     mainWindow.loadURL(`file://${htmlPath}?startup_error=1`)
+  } else {
+    mainWindow.loadFile(htmlPath).catch(() => {})
+  }
+}
+
+function loadWizardPage() {
+  if (!mainWindow) return
+  const htmlPath = path.join(__dirname, '..', 'dist', 'index.html')
+  if (fs.existsSync(htmlPath)) {
+    mainWindow.loadURL(`file://${htmlPath}?wizard=1`)
   } else {
     mainWindow.loadFile(htmlPath).catch(() => {})
   }
@@ -462,17 +476,87 @@ function registerIpcHandlers() {
     config.recentSessionId = sessionId
     saveConfig()
   })
+
+  ipcMain.handle('wizard:checkNeed', () => wizard.checkNeedWizard())
+
+  ipcMain.handle('wizard:start', (_e, trigger: wizard.WizardTrigger) => {
+    wizard.startWizard(trigger)
+    return wizard.getWizardState()
+  })
+
+  ipcMain.handle('wizard:getState', () => wizard.getWizardState())
+
+  ipcMain.handle('wizard:goToStep', (_e, step: wizard.WizardStep) => {
+    wizard.goToStep(step)
+    return wizard.getWizardState()
+  })
+
+  ipcMain.handle('wizard:runEnvCheck', async () => {
+    const result = await wizard.runEnvCheck()
+    return { state: wizard.getWizardState(), result }
+  })
+
+  ipcMain.handle('wizard:setDataDir', (_e, dir: string) => {
+    wizard.setSelectedDataDir(dir)
+    return wizard.getWizardState()
+  })
+
+  ipcMain.handle('wizard:checkDataDir', async (_e, dir: string) => {
+    return await wizard.checkDataDir(dir)
+  })
+
+  ipcMain.handle('wizard:handleData', async (_e, action: 'migrate' | 'init-new' | 'use-existing', sourceDbPath?: string) => {
+    const result = await wizard.handleData(action, sourceDbPath)
+    return { state: wizard.getWizardState(), result }
+  })
+
+  ipcMain.handle('wizard:setRestoreSession', (_e, sessionId: number | null) => {
+    wizard.setRestoreSession(sessionId)
+    return wizard.getWizardState()
+  })
+
+  ipcMain.handle('wizard:detectOldDb', () => wizard.detectOldDatabase())
+
+  ipcMain.handle('wizard:complete', async () => {
+    wizard.completeWizard()
+    const state = wizard.getWizardState()
+    backendError = null
+    stopServer()
+    try {
+      await startServer()
+      if (mainWindow) {
+        const serverUrl = `http://localhost:${config.serverPort}`
+        mainWindow.loadURL(serverUrl).catch(() => {})
+      }
+    } catch (err: any) {
+      console.error('Start server after wizard failed:', err)
+    }
+    return state
+  })
+
+  ipcMain.handle('wizard:cancel', () => {
+    wizard.cancelWizard()
+    return wizard.getWizardState()
+  })
 }
 
 app.whenReady().then(async () => {
   config = loadConfig()
   registerIpcHandlers()
 
-  startServer().catch((err) => {
-    console.error('Initial server start failed:', err)
-  })
+  wizard.initWizard(config, getConfigPath(), getDefaultDataDir())
 
-  createWindow()
+  const needWizard = wizard.checkNeedWizard()
+  if (needWizard.need) {
+    wizard.startWizard(needWizard.trigger)
+    wizard.addLog('info', 'welcome', `检测到需要启动向导: ${needWizard.reason}`)
+    createWindow()
+  } else {
+    startServer().catch((err) => {
+      console.error('Initial server start failed:', err)
+    })
+    createWindow()
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

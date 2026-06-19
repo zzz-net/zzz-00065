@@ -42,6 +42,18 @@ declare global {
       pathBasename: (p: string) => Promise<string>
       getDefaultDataDir: () => Promise<string>
       setRecentSession: (sessionId: number | null) => void
+      wizardCheckNeed: () => Promise<{ need: boolean; trigger?: string; reason?: string }>
+      wizardStart: (trigger: string) => Promise<any>
+      wizardGetState: () => Promise<any>
+      wizardGoToStep: (step: string) => Promise<any>
+      wizardRunEnvCheck: () => Promise<{ state: any; result: any }>
+      wizardSetDataDir: (dir: string) => Promise<any>
+      wizardCheckDataDir: (dir: string) => Promise<{ ok: boolean; error?: string; hasExistingDb: boolean; dbPath: string }>
+      wizardHandleData: (action: 'migrate' | 'init-new' | 'use-existing', sourceDbPath?: string) => Promise<{ state: any; result: any }>
+      wizardSetRestoreSession: (sessionId: number | null) => Promise<any>
+      wizardDetectOldDb: () => Promise<string | null>
+      wizardComplete: () => Promise<any>
+      wizardCancel: () => Promise<any>
     }
   }
 }

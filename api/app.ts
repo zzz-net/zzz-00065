@@ -17,6 +17,7 @@ import anomalyRoutes from './routes/anomalies.js'
 import auditRoutes from './routes/audit.js'
 import exportRoutes from './routes/export.js'
 import systemRoutes from './routes/system.js'
+import wizardRoutes from './routes/wizard.js'
 
 dotenv.config()
 
@@ -52,6 +53,7 @@ app.use('/api/sessions', exportRoutes)
 app.use('/api/audit-logs', auditRoutes)
 app.use('/api', systemRoutes)
 app.use('/api', exportRoutes)
+app.use('/api', wizardRoutes)
 
 app.use(
   '/api/health',
