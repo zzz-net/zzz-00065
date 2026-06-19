@@ -72,6 +72,12 @@ router.post('/:sessionId/seats/auto', (req: Request, res: Response): void => {
 });
 
 router.post('/:sessionId/seats/force-change', (req: Request, res: Response): void => {
+  const operator = (req as any).operator;
+  if (operator.role !== 'admin') {
+    res.status(403).json({ success: false, error: '仅管理员可强制换座' });
+    return;
+  }
+
   const { sessionId } = req.params;
   const { studentId, toRow, toCol, reason } = req.body;
   if (!studentId || toRow == null || toCol == null || !reason) {
@@ -137,6 +143,12 @@ router.post('/:sessionId/seats/force-change', (req: Request, res: Response): voi
 });
 
 router.post('/:sessionId/seats/undo-change', (req: Request, res: Response): void => {
+  const operator = (req as any).operator;
+  if (operator.role !== 'admin') {
+    res.status(403).json({ success: false, error: '仅管理员可撤销换座' });
+    return;
+  }
+
   const { sessionId } = req.params;
   const { changeId } = req.body;
   if (!changeId) {

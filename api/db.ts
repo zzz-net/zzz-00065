@@ -2,7 +2,8 @@ import initSqlJs, { type Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 
-const DB_PATH = path.resolve(process.cwd(), 'exam-manager.db');
+const DB_DIR = process.env.DB_DIR || process.cwd();
+const DB_PATH = path.resolve(DB_DIR, 'exam-manager.db');
 
 let db: Database;
 

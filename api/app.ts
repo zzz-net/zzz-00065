@@ -5,6 +5,8 @@ import express, {
 } from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { initDB } from './db.js'
 import operatorRoutes from './routes/operators.js'
 import roomRoutes from './routes/rooms.js'
@@ -58,6 +60,16 @@ app.use(
     })
   },
 )
+
+if (process.env.ELECTRON_RUN === '1') {
+  const __filename = fileURLToPath(import.meta.url)
+  const __dirname = path.dirname(__filename)
+  const clientDist = path.resolve(__dirname, '..', 'dist')
+  app.use(express.static(clientDist))
+  app.get('*', (_req: Request, res: Response) => {
+    res.sendFile(path.join(clientDist, 'index.html'))
+  })
+}
 
 app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error(error)

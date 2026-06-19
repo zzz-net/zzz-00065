@@ -10,7 +10,14 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-electron
+release
 *.local
+
+# Runtime database artifacts
+exam-manager.db
+exam-manager.db-wal
+exam-manager.db-shm
 
 # Editor directories and files
 .vscode/*

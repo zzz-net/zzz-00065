@@ -1,16 +1,21 @@
 {
-  "name": "zzz-00065",
+  "name": "exam-session-manager",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "main": "dist-electron/main.js",
   "scripts": {
     "client:dev": "vite",
     "build": "tsc -b && vite build",
+    "build:electron": "vite build && tsc --outDir dist-electron --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck electron/main.ts && tsc --outDir dist-electron --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck api/server.ts api/app.ts api/db.ts api/routes/operators.ts api/routes/rooms.ts api/routes/sessions.ts api/routes/students.ts api/routes/seats.ts api/routes/checkins.ts api/routes/anomalies.ts api/routes/audit.ts api/routes/export.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "server:dev": "nodemon",
-    "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\""
+    "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
+    "electron:dev": "vite build && tsc -p tsconfig.electron.json && electron .",
+    "electron:start": "npm run build:all && electron .",
+    "build:all": "vite build && tsc -p tsconfig.electron.json"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -27,17 +32,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.25.0",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
     "@types/express": "^4.17.21",
     "@types/node": "^22.15.30",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vercel/node": "^5.3.6",
     "@vitejs/plugin-react": "^4.4.1",
     "autoprefixer": "^10.4.21",
     "babel-plugin-react-dev-locator": "^1.0.0",
     "concurrently": "^9.2.0",
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
     "eslint": "^9.25.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.19",
@@ -51,5 +56,26 @@
     "vite": "^6.3.5",
     "vite-plugin-trae-solo-badge": "^1.0.0",
     "vite-tsconfig-paths": "^5.1.4"
+  },
+  "build": {
+    "appId": "com.exam-session-manager.app",
+    "productName": "培训考场管理系统",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/sql.js/dist/sql-wasm.wasm",
+        "to": "sql-wasm.wasm"
+      }
+    ],
+    "win": {
+      "target": "portable"
+    }
   }
 }

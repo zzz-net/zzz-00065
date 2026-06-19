@@ -280,7 +280,11 @@ export default function SessionDetail() {
         <div>
           <div className="flex gap-2 mb-4">
             <button onClick={handleAutoSeat} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700">自动排座</button>
-            <button onClick={() => setShowForce(true)} className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">强制换座</button>
+            {isAdmin() ? (
+              <button onClick={() => setShowForce(true)} className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">强制换座</button>
+            ) : (
+              <span className="bg-gray-300 text-gray-500 px-3 py-1.5 rounded text-sm cursor-not-allowed" title="仅管理员可强制换座">强制换座</span>
+            )}
           </div>
           <div className="mb-6 overflow-auto">
             {Array.from({ length: session.seat_rows }, (_, r) => (
@@ -312,7 +316,7 @@ export default function SessionDetail() {
                   <td className="px-3 py-2">{ch.reason}</td>
                   <td className="px-3 py-2">{ch.operator_name}</td>
                   <td className="px-3 py-2">{ch.undone ? <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">已撤销</span> : <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">生效中</span>}</td>
-                  <td className="px-3 py-2">{!ch.undone && <button onClick={() => handleUndoChange(ch.id)} className="text-orange-600 hover:text-orange-800 flex items-center gap-1"><Undo2 size={14} /> 撤销</button>}</td>
+                  <td className="px-3 py-2">{!ch.undone && (isAdmin() ? <button onClick={() => handleUndoChange(ch.id)} className="text-orange-600 hover:text-orange-800 flex items-center gap-1"><Undo2 size={14} /> 撤销</button> : <span className="text-xs text-gray-400 cursor-not-allowed" title="仅管理员可撤销换座">撤销</span>)}</td>
                 </tr>
               ))}
               {seatChanges.length === 0 && <tr><td colSpan={8} className="px-3 py-4 text-center text-gray-400">暂无换座记录</td></tr>}
