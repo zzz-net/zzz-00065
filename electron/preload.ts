@@ -4,7 +4,17 @@ declare global {
   interface Window {
     electronAPI?: {
       getConfig: () => Promise<any>
-      setConfig: (config: Partial<{ dataDir: string; serverPort: number }>) => Promise<any>
+      setConfig: (config: Partial<{ dataDir: string; serverPort: number }>) => Promise<{
+        success: boolean
+        config?: any
+        error?: string
+        errorCode?: string
+        libraryState?: { exists: boolean; isEmpty: boolean; hasValidSchema: boolean; dbPath: string; dbSize?: number; dbModified?: string }
+        needWizard?: boolean
+        wizardTrigger?: string
+        wizardReason?: string
+        wizardComplete?: boolean
+      }>
       selectDirectory: () => Promise<any>
       showSaveDialog: (options: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<any>
       showErrorBox: (title: string, content: string) => Promise<void>
@@ -32,6 +42,9 @@ declare global {
       wizardDetectOldDb: () => Promise<string | null>
       wizardComplete: () => Promise<any>
       wizardCancel: () => Promise<any>
+      libraryDetectState: (dir?: string) => Promise<any>
+      wizardMarkComplete: (dir?: string) => Promise<any>
+      workspaceSwitchAndInit: (newDir: string, dataAction: 'init-new' | 'use-existing' | 'migrate', sourceDbPath?: string) => Promise<any>
     }
   }
 }
@@ -79,4 +92,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   wizardDetectOldDb: () => ipcRenderer.invoke('wizard:detectOldDb'),
   wizardComplete: () => ipcRenderer.invoke('wizard:complete'),
   wizardCancel: () => ipcRenderer.invoke('wizard:cancel'),
+  libraryDetectState: (dir?: string) => ipcRenderer.invoke('library:detectState', dir),
+  wizardMarkComplete: (dir?: string) => ipcRenderer.invoke('wizard:markComplete', dir),
+  workspaceSwitchAndInit: (newDir: string, dataAction: 'init-new' | 'use-existing' | 'migrate', sourceDbPath?: string) =>
+    ipcRenderer.invoke('workspace:switchAndInit', newDir, dataAction, sourceDbPath),
 })

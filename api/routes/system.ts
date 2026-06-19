@@ -6,6 +6,8 @@ import {
   ensureDirectoryWritable,
   setDataDirectory,
   addAuditLog,
+  reinitDB,
+  isDBReady,
 } from '../db.js';
 import { requireAuth } from './operators.js';
 import * as fs from 'fs';
@@ -81,7 +83,7 @@ router.post('/system/data-directory/check', requireAuth, (req: Request, res: Res
   });
 });
 
-router.post('/system/data-directory/switch', requireAuth, (req: Request, res: Response): void => {
+router.post('/system/data-directory/switch', requireAuth, async (req: Request, res: Response): Promise<void> => {
   const operator = (req as any).operator;
   if (operator.role !== 'admin') {
     res.status(403).json({ success: false, error: '仅管理员可切换数据目录' });
@@ -97,16 +99,29 @@ router.post('/system/data-directory/switch', requireAuth, (req: Request, res: Re
     res.status(400).json({
       success: false,
       error: `目录不可用：${result.error}`,
+      errorCode: 'DATA_DIR_NOT_WRITABLE',
     });
     return;
   }
+
+  const reinitResult = await reinitDB();
+  if (!reinitResult.ok) {
+    res.status(500).json({
+      success: false,
+      error: `切换目录后数据库初始化失败：${reinitResult.error}`,
+      errorCode: 'DB_INIT_FAILED',
+    });
+    return;
+  }
+
   addAuditLog(null, operator.id, 'switch_data_dir', `切换数据目录到：${directory}`);
   res.json({
     success: true,
     data: {
       newDirectory: directory,
       dbPath: getDatabasePath(),
-      notice: '请重启应用以加载新目录的数据库。当前内存中的数据库未变。',
+      dbReady: isDBReady(),
+      notice: '数据目录已切换，数据库连接已重新初始化。',
     },
   });
 });

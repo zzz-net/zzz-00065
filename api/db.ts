@@ -122,6 +122,47 @@ export function setDataDirectory(newDir: string): { ok: boolean; error?: string 
   return { ok: true };
 }
 
+let dbReady = false;
+
+export function isDBReady(): boolean {
+  return dbReady;
+}
+
+export async function reinitDB(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const dirCheck = ensureDirectoryWritable(dbDir);
+    if (!dirCheck.ok) {
+      return { ok: false, error: `数据目录不可写 (${dbDir}): ${dirCheck.error}` };
+    }
+
+    const SQL = await initSqlJs();
+    if (fs.existsSync(dbPath)) {
+      const buffer = fs.readFileSync(dbPath);
+      db = new SQL.Database(buffer);
+    } else {
+      db = new SQL.Database();
+    }
+
+    for (const sql of TABLES) {
+      db.run(sql);
+    }
+
+    db.run(
+      `INSERT OR IGNORE INTO operators (username, display_name, role) VALUES ('admin', '管理员', 'admin')`
+    );
+    db.run(
+      `INSERT OR IGNORE INTO operators (username, display_name, role) VALUES ('operator1', '操作员1', 'operator')`
+    );
+
+    saveDB();
+    dbReady = true;
+    return { ok: true };
+  } catch (e: any) {
+    dbReady = false;
+    return { ok: false, error: e?.message || '数据库重新初始化失败' };
+  }
+}
+
 export function getDataDirectory(): string {
   return dbDir;
 }
@@ -133,6 +174,7 @@ export function getDatabasePath(): string {
 export async function initDB() {
   const dirCheck = ensureDirectoryWritable(dbDir);
   if (!dirCheck.ok) {
+    dbReady = false;
     throw new Error(`数据目录不可写 (${dbDir}): ${dirCheck.error}`);
   }
 
@@ -156,6 +198,7 @@ export async function initDB() {
   );
 
   saveDB();
+  dbReady = true;
 }
 
 export function saveDB() {

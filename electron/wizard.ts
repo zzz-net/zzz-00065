@@ -59,7 +59,9 @@ interface AppConfig {
   dataDir: string
   serverPort: number
   recentSessionId: number | null
+  recentSessionsByDir: Record<string, number | null>
   windowBounds: { width: number; height: number; x?: number; y?: number; maximized?: boolean } | null
+  lastWizardCompleteByDir: Record<string, boolean>
 }
 
 let state: WizardState = {
@@ -127,6 +129,10 @@ function persistLogs() {
   }
 }
 
+function isWizardCompleteForDir(dir: string): boolean {
+  return config?.lastWizardCompleteByDir?.[dir] ?? false
+}
+
 export function checkNeedWizard(): { need: boolean; trigger: WizardTrigger; reason?: string } {
   if (!config) return { need: false, trigger: 'first-run' }
 
@@ -135,21 +141,32 @@ export function checkNeedWizard(): { need: boolean; trigger: WizardTrigger; reas
   const dbExists = fs.existsSync(dbPath)
   const oldDataDir = path.join(process.cwd(), 'exam-manager.db')
   const oldDbExists = fs.existsSync(oldDataDir)
+  const wizardComplete = isWizardCompleteForDir(config.dataDir)
+
+  if (state.active) {
+    return { need: true, trigger: state.trigger, reason: '向导正在进行中' }
+  }
 
   if (!configExists) {
     return { need: true, trigger: 'first-run', reason: '配置文件不存在，首次启动' }
   }
 
-  if (!dbExists && oldDbExists) {
-    return { need: true, trigger: 'old-db-detected', reason: '检测到项目目录下的旧数据库，需要迁移' }
+  if (!wizardComplete) {
+    if (!dbExists && oldDbExists) {
+      return { need: true, trigger: 'old-db-detected', reason: '检测到项目目录下的旧数据库，需要迁移' }
+    }
+
+    if (!dbExists) {
+      return { need: true, trigger: 'first-run', reason: '数据库不存在，需要初始化' }
+    }
+
+    if (dbExists) {
+      return { need: true, trigger: 'first-run', reason: '检测到现有数据库，需要确认处理方式' }
+    }
   }
 
-  if (!dbExists) {
-    return { need: true, trigger: 'first-run', reason: '数据库不存在，需要初始化' }
-  }
-
-  if (state.active) {
-    return { need: true, trigger: state.trigger, reason: '向导正在进行中' }
+  if (wizardComplete && !dbExists) {
+    return { need: true, trigger: 'dir-switch', reason: '数据目录变更，数据库文件丢失，需要重新初始化' }
   }
 
   return { need: false, trigger: 'first-run' }
@@ -432,6 +449,15 @@ export function setRestoreSession(sessionId: number | null) {
   addLog('info', 'session-restore', sessionId ? `设置恢复场次: ${sessionId}` : '不恢复场次')
 }
 
+function markWizardCompleteForDir(dir: string) {
+  if (!config) return
+  if (!config.lastWizardCompleteByDir) {
+    config.lastWizardCompleteByDir = {}
+  }
+  config.lastWizardCompleteByDir[dir] = true
+  saveConfig()
+}
+
 export function completeWizard() {
   state.completed = true
   state.active = false
@@ -443,6 +469,7 @@ export function completeWizard() {
     if (state.envCheckResult?.resolvedPort) {
       config.serverPort = state.envCheckResult.resolvedPort
     }
+    markWizardCompleteForDir(state.selectedDataDir)
     saveConfig()
   }
 }

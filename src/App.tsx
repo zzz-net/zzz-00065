@@ -29,12 +29,6 @@ function StartupGate({ children }: { children: React.ReactNode }) {
     const isElectron = typeof window !== 'undefined' && !!window.electronAPI
     const params = new URLSearchParams(window.location.search)
 
-    if (params.get('wizard') === '1') {
-      setShowWizard(true)
-      setChecking(false)
-      return
-    }
-
     if (params.get('startup_error') === '1' || loc.pathname === '/startup-error') {
       setHasError(true)
       setChecking(false)
@@ -48,8 +42,16 @@ function StartupGate({ children }: { children: React.ReactNode }) {
 
     const checkStatus = async () => {
       try {
+        const wizardState = await window.electronAPI!.wizardGetState()
+        if (wizardState.active) {
+          setShowWizard(true)
+          setChecking(false)
+          return
+        }
+
         const needWizard = await window.electronAPI!.wizardCheckNeed()
         if (needWizard.need) {
+          await window.electronAPI!.wizardStart(needWizard.trigger)
           setShowWizard(true)
           setChecking(false)
           return
@@ -59,8 +61,8 @@ function StartupGate({ children }: { children: React.ReactNode }) {
         if (s.error) {
           setHasError(true)
         }
-      } catch {
-        // ignore
+      } catch (e) {
+        console.warn('Startup check failed:', e)
       }
       setChecking(false)
     }
@@ -71,8 +73,25 @@ function StartupGate({ children }: { children: React.ReactNode }) {
     const unsubReady = window.electronAPI!.onBackendReady(() => {
       setHasError(false)
     })
-    return () => { unsub(); unsubReady() }
-  }, [])
+
+    const checkWizardInterval = setInterval(async () => {
+      try {
+        const wizardState = await window.electronAPI!.wizardGetState()
+        if (wizardState.active && !showWizard) {
+          setShowWizard(true)
+        } else if (!wizardState.active && showWizard) {
+          setShowWizard(false)
+          window.location.reload()
+        }
+      } catch {}
+    }, 1000)
+
+    return () => {
+      unsub()
+      unsubReady()
+      clearInterval(checkWizardInterval)
+    }
+  }, [showWizard])
 
   if (showWizard) return <StartupWizard />
   if (hasError) return <StartupError />

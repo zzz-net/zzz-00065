@@ -63,7 +63,24 @@ export default function Home() {
   const loadRecentFromConfig = async () => {
     if (!window.electronAPI) return
     const cfg = await window.electronAPI.getConfig()
-    setRecentSessionId(cfg.recentSessionId)
+    const storedRecentId = cfg.recentSessionId
+
+    if (storedRecentId != null) {
+      try {
+        const checkResult = await apiFetch(`/api/sessions/${storedRecentId}`)
+        if (!checkResult.success || !checkResult.data) {
+          window.electronAPI.setRecentSession(null)
+          setRecentSessionId(null)
+          return
+        }
+        setRecentSessionId(storedRecentId)
+      } catch {
+        window.electronAPI.setRecentSession(null)
+        setRecentSessionId(null)
+      }
+    } else {
+      setRecentSessionId(null)
+    }
   }
 
   const openSession = async (id: number) => {

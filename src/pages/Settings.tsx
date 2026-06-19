@@ -104,20 +104,48 @@ export default function Settings() {
           setSaving(false)
           return
         }
+
+        const rAny = r as any
+        if (rAny.needWizard && rAny.wizardTrigger) {
+          const confirmResult = await window.electronAPI.showMessageBox({
+            type: 'question',
+            title: '数据目录变更',
+            message: `检测到${rAny.libraryState?.exists ? '该目录已有数据库' : '该目录为空'}，需要进入初始化向导。\n\n${rAny.wizardReason || ''}\n\n是否立即进入配置向导？`,
+            buttons: ['取消', '进入向导'],
+          })
+
+          if (confirmResult.response === 1) {
+            await window.electronAPI.wizardStart(rAny.wizardTrigger)
+            await window.electronAPI.wizardSetDataDir(dataDir)
+            window.location.reload()
+            return
+          } else {
+            setSaveMsg({ type: 'success', text: '配置已保存。下次启动时将自动进入配置向导。' })
+            setSaving(false)
+            return
+          }
+        }
       }
+
       if (dataDir !== (systemInfo?.dataDir || '')) {
         try {
-          await apiFetch('/api/system/data-directory/switch', {
+          const switchResult = await apiFetch('/api/system/data-directory/switch', {
             method: 'POST',
             body: JSON.stringify({ directory: dataDir }),
           })
+          if (switchResult.success) {
+            setSaveMsg({ type: 'success', text: '数据目录已切换，数据库连接已重新初始化。' })
+            loadSystemInfo()
+            setSaving(false)
+            return
+          }
         } catch (e: any) {
           setSaveMsg({ type: 'error', text: `后端切换目录失败: ${e.message || '未知错误'}。配置已保存，重启后生效。` })
           setSaving(false)
           return
         }
       }
-      setSaveMsg({ type: 'success', text: '设置已保存。切换端口或数据目录需要重启后端服务。' })
+      setSaveMsg({ type: 'success', text: '设置已保存。' })
       loadSystemInfo()
     } catch (e: any) {
       setSaveMsg({ type: 'error', text: e.message || '保存失败' })

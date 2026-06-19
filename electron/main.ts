@@ -17,6 +17,7 @@ interface AppConfig {
   dataDir: string
   serverPort: number
   recentSessionId: number | null
+  recentSessionsByDir: Record<string, number | null>
   windowBounds: {
     width: number
     height: number
@@ -24,6 +25,7 @@ interface AppConfig {
     y?: number
     maximized?: boolean
   } | null
+  lastWizardCompleteByDir: Record<string, boolean>
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -47,7 +49,9 @@ function defaultConfig(): AppConfig {
     dataDir: getDefaultDataDir(),
     serverPort: 3001,
     recentSessionId: null,
+    recentSessionsByDir: {},
     windowBounds: null,
+    lastWizardCompleteByDir: {},
   }
 }
 
@@ -93,6 +97,73 @@ function ensureDataDir(dir: string): { ok: boolean; error?: string } {
       error: e?.message || '未知错误',
     }
   }
+}
+
+interface LibraryState {
+  exists: boolean
+  isEmpty: boolean
+  hasValidSchema: boolean
+  dbPath: string
+  dbSize?: number
+  dbModified?: string
+}
+
+function detectLibraryState(dir: string): LibraryState {
+  const dbPath = path.join(dir, 'exam-manager.db')
+  const result: LibraryState = {
+    exists: false,
+    isEmpty: true,
+    hasValidSchema: false,
+    dbPath,
+  }
+
+  if (!fs.existsSync(dbPath)) {
+    return result
+  }
+
+  result.exists = true
+  try {
+    const stat = fs.statSync(dbPath)
+    result.dbSize = stat.size
+    result.dbModified = stat.mtime.toISOString()
+    if (stat.size > 0) {
+      result.isEmpty = false
+    }
+  } catch {}
+
+  try {
+    const buffer = fs.readFileSync(dbPath)
+    const header = buffer.slice(0, 16).toString('utf-8')
+    result.hasValidSchema = header.includes('SQLite')
+  } catch {
+    result.hasValidSchema = false
+  }
+
+  return result
+}
+
+function getRecentSessionForDir(dir: string): number | null {
+  return config.recentSessionsByDir?.[dir] ?? null
+}
+
+function setRecentSessionForDir(dir: string, sessionId: number | null) {
+  if (!config.recentSessionsByDir) {
+    config.recentSessionsByDir = {}
+  }
+  config.recentSessionsByDir[dir] = sessionId
+  saveConfig()
+}
+
+function isWizardCompleteForDir(dir: string): boolean {
+  return config.lastWizardCompleteByDir?.[dir] ?? false
+}
+
+function markWizardCompleteForDir(dir: string) {
+  if (!config.lastWizardCompleteByDir) {
+    config.lastWizardCompleteByDir = {}
+  }
+  config.lastWizardCompleteByDir[dir] = true
+  saveConfig()
 }
 
 function checkPortAvailable(port: number): Promise<boolean> {
@@ -385,18 +456,62 @@ function registerIpcHandlers() {
         return {
           success: false,
           error: `数据目录不可用：${check.error}`,
+          errorCode: 'DATA_DIR_NOT_WRITABLE',
         }
       }
+
+      const libState = detectLibraryState(patch.dataDir)
+      const oldDir = config.dataDir
+
+      setRecentSessionForDir(oldDir, config.recentSessionId)
+
+      config = { ...config, ...patch }
+
+      const recentForNewDir = getRecentSessionForDir(patch.dataDir)
+      config.recentSessionId = recentForNewDir
+
+      saveConfig()
+
+      const wizardComplete = isWizardCompleteForDir(patch.dataDir)
+
+      let trigger: wizard.WizardTrigger | null = null
+      let reason = ''
+
+      if (!wizardComplete) {
+        if (!libState.exists) {
+          trigger = 'dir-switch'
+          reason = '切换到空目录，需要初始化新数据库'
+        } else if (libState.exists && !libState.hasValidSchema) {
+          trigger = 'dir-switch'
+          reason = '切换到的目录存在无效数据库文件'
+        } else if (libState.exists && libState.hasValidSchema) {
+          trigger = 'dir-switch'
+          reason = '切换到已有数据库的目录，需要确认处理方式'
+        }
+      }
+
+      return {
+        success: true,
+        config,
+        libraryState: libState,
+        needWizard: trigger != null,
+        wizardTrigger: trigger,
+        wizardReason: reason,
+        wizardComplete,
+      }
     }
+
     if (patch.serverPort != null && patch.serverPort !== config.serverPort) {
       const ok = await checkPortAvailable(patch.serverPort)
       if (!ok) {
         return {
           success: false,
           error: `端口 ${patch.serverPort} 已被占用`,
+          errorCode: 'PORT_NOT_AVAILABLE',
         }
       }
     }
+
     config = { ...config, ...patch }
     saveConfig()
     return { success: true, config }
@@ -451,12 +566,16 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('backend:status', () => {
+    const libState = detectLibraryState(config.dataDir)
     return {
       ready: backendReady,
       port: config.serverPort,
       dataDir: config.dataDir,
       error: backendError,
       recentSessionId: config.recentSessionId,
+      libraryState: libState,
+      wizardComplete: isWizardCompleteForDir(config.dataDir),
+      recentSessionsByDir: config.recentSessionsByDir,
     }
   })
 
@@ -474,7 +593,42 @@ function registerIpcHandlers() {
 
   ipcMain.on('recent-session:set', (_e, sessionId: number | null) => {
     config.recentSessionId = sessionId
+    setRecentSessionForDir(config.dataDir, sessionId)
+  })
+
+  ipcMain.handle('library:detectState', (_e, dir?: string) => {
+    return detectLibraryState(dir || config.dataDir)
+  })
+
+  ipcMain.handle('wizard:markComplete', (_e, dir?: string) => {
+    markWizardCompleteForDir(dir || config.dataDir)
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:switchAndInit', async (_e, newDir: string, dataAction: 'init-new' | 'use-existing' | 'migrate', sourceDbPath?: string) => {
+    const oldDir = config.dataDir
+    setRecentSessionForDir(oldDir, config.recentSessionId)
+
+    const handleResult = await wizard.handleData(dataAction, sourceDbPath)
+    if (handleResult.status !== 'success') {
+      return {
+        success: false,
+        error: handleResult.message,
+        errorDetail: handleResult.errorDetail,
+      }
+    }
+
+    config.dataDir = newDir
+    config.recentSessionId = getRecentSessionForDir(newDir)
     saveConfig()
+
+    markWizardCompleteForDir(newDir)
+
+    return {
+      success: true,
+      config,
+      handleResult,
+    }
   })
 
   ipcMain.handle('wizard:checkNeed', () => wizard.checkNeedWizard())
@@ -520,6 +674,7 @@ function registerIpcHandlers() {
   ipcMain.handle('wizard:complete', async () => {
     wizard.completeWizard()
     const state = wizard.getWizardState()
+    markWizardCompleteForDir(config.dataDir)
     backendError = null
     stopServer()
     try {
@@ -530,6 +685,7 @@ function registerIpcHandlers() {
       }
     } catch (err: any) {
       console.error('Start server after wizard failed:', err)
+      wizard.addLog('error', 'system', '向导完成后启动服务器失败', err?.message)
     }
     return state
   })
