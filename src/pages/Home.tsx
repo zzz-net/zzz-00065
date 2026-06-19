@@ -62,8 +62,15 @@ export default function Home() {
 
   const loadRecentFromConfig = async () => {
     if (!window.electronAPI) return
-    const cfg = await window.electronAPI.getConfig()
-    const storedRecentId = cfg.recentSessionId
+    let storedRecentId: number | null = null
+
+    const status = await window.electronAPI.getBackendStatus()
+    if (status?.workspaceMeta?.recentSessionId != null) {
+      storedRecentId = status.workspaceMeta.recentSessionId
+    } else {
+      const cfg = await window.electronAPI.getConfig()
+      storedRecentId = cfg.recentSessionId ?? null
+    }
 
     if (storedRecentId != null) {
       try {

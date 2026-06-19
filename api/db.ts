@@ -1,10 +1,26 @@
-import initSqlJs, { type Database } from 'sql.js';
-import fs from 'fs';
-import path from 'path';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const DB_FILENAME = 'exam-manager.db';
+
+let initSqlJsModule: any = null;
+
+async function getInitSqlJs() {
+  if (!initSqlJsModule) {
+    try {
+      const mod = await (Function('return import("sql.js")')());
+      initSqlJsModule = mod.default || mod;
+    } catch (e) {
+      const CommonJSRaw = require('sql.js');
+      initSqlJsModule = CommonJSRaw.default || CommonJSRaw;
+    }
+  }
+  return initSqlJsModule;
+}
 
 let dbDir: string = process.env.DB_DIR || process.cwd();
-let dbPath: string = path.resolve(dbDir, 'exam-manager.db');
-let db: Database;
+let dbPath: string = path.resolve(dbDir, DB_FILENAME);
+let db: any = null;
 
 const TABLES = [
   `CREATE TABLE IF NOT EXISTS operators (
@@ -95,30 +111,31 @@ const TABLES = [
   )`,
 ];
 
-export function ensureDirectoryWritable(dirPath: string): { ok: boolean; error?: string } {
+export function ensureDirectoryWritable(dirPath: string): { ok: boolean; error?: string; errorCode?: string } {
   try {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
-    const testFile = path.join(dirPath, `.write-test-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
-    fs.writeFileSync(testFile, 'test', 'utf-8');
+    const testFile = path.join(dirPath, `.write-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.tmp`);
+    fs.writeFileSync(testFile, 'db-write-test', 'utf-8');
     fs.unlinkSync(testFile);
     return { ok: true };
   } catch (e: any) {
     return {
       ok: false,
-      error: e?.code || e?.message || '未知错误',
+      error: e?.message || String(e) || '未知错误',
+      errorCode: e?.code || 'UNKNOWN',
     };
   }
 }
 
-export function setDataDirectory(newDir: string): { ok: boolean; error?: string } {
+export function setDataDirectory(newDir: string): { ok: boolean; error?: string; errorCode?: string } {
   const check = ensureDirectoryWritable(newDir);
   if (!check.ok) {
     return check;
   }
   dbDir = newDir;
-  dbPath = path.resolve(dbDir, 'exam-manager.db');
+  dbPath = path.resolve(dbDir, DB_FILENAME);
   return { ok: true };
 }
 
@@ -135,11 +152,18 @@ export async function reinitDB(): Promise<{ ok: boolean; error?: string }> {
       return { ok: false, error: `数据目录不可写 (${dbDir}): ${dirCheck.error}` };
     }
 
+    const initSqlJs = await getInitSqlJs();
     const SQL = await initSqlJs();
     if (fs.existsSync(dbPath)) {
       const buffer = fs.readFileSync(dbPath);
+      if (db) {
+        try { db.close(); } catch {}
+      }
       db = new SQL.Database(buffer);
     } else {
+      if (db) {
+        try { db.close(); } catch {}
+      }
       db = new SQL.Database();
     }
 
@@ -178,11 +202,18 @@ export async function initDB() {
     throw new Error(`数据目录不可写 (${dbDir}): ${dirCheck.error}`);
   }
 
+  const initSqlJs = await getInitSqlJs();
   const SQL = await initSqlJs();
   if (fs.existsSync(dbPath)) {
     const buffer = fs.readFileSync(dbPath);
+    if (db) {
+      try { db.close(); } catch {}
+    }
     db = new SQL.Database(buffer);
   } else {
+    if (db) {
+      try { db.close(); } catch {}
+    }
     db = new SQL.Database();
   }
 
@@ -202,12 +233,28 @@ export async function initDB() {
 }
 
 export function saveDB() {
+  if (!db) return;
   const data = db.export();
   const buffer = Buffer.from(data);
-  fs.writeFileSync(dbPath, buffer);
+  const dir = path.dirname(dbPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const tmpPath = dbPath + '.tmp';
+  fs.writeFileSync(tmpPath, buffer);
+  try {
+    fs.renameSync(tmpPath, dbPath);
+  } catch (e) {
+    try {
+      fs.copyFileSync(tmpPath, dbPath);
+      fs.unlinkSync(tmpPath);
+    } catch (e2: any) {
+      throw new Error(`保存数据库失败: ${e2?.message || String(e2)}`);
+    }
+  }
 }
 
-export function getDB(): Database {
+export function getDB(): any {
   return db;
 }
 

@@ -7,16 +7,18 @@
   "scripts": {
     "client:dev": "vite",
     "build": "tsc -b && vite build",
-    "build:electron": "vite build && tsc --outDir dist-electron --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck electron/main.ts && tsc --outDir dist-electron --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck api/server.ts api/app.ts api/db.ts api/routes/operators.ts api/routes/rooms.ts api/routes/sessions.ts api/routes/students.ts api/routes/seats.ts api/routes/checkins.ts api/routes/anomalies.ts api/routes/audit.ts api/routes/export.ts",
     "lint": "eslint .",
     "preview": "vite preview",
     "check": "tsc --noEmit",
     "server:dev": "nodemon",
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
-    "electron:dev": "vite build && tsc -p tsconfig.electron.json && electron .",
+    "electron:dev": "npm run build:all && electron .",
     "electron:start": "npm run build:all && electron .",
-    "build:all": "vite build && tsc -p tsconfig.electron.json && tsc --outDir dist-electron/api --rootDir api --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck --resolveJsonModule api/server.ts api/app.ts api/db.ts api/routes/operators.ts api/routes/rooms.ts api/routes/sessions.ts api/routes/students.ts api/routes/seats.ts api/routes/checkins.ts api/routes/anomalies.ts api/routes/audit.ts api/routes/export.ts api/routes/system.ts api/routes/wizard.ts",
-    "verify": "node scripts/verify-chains.mjs"
+    "build:api": "tsc --outDir dist-electron/api --rootDir api --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck --resolveJsonModule api/server.ts api/app.ts api/db.ts api/routes/operators.ts api/routes/rooms.ts api/routes/sessions.ts api/routes/students.ts api/routes/seats.ts api/routes/checkins.ts api/routes/anomalies.ts api/routes/audit.ts api/routes/export.ts api/routes/system.ts api/routes/wizard.ts api/routes/auth.ts && node -e \"require('fs').copyFileSync('api/package.json','dist-electron/api/package.json')\"",
+    "build:electron-main": "tsc -p tsconfig.electron.json && node -e \"require('fs').copyFileSync('electron/package.json','dist-electron/package.json')\"",
+    "build:all": "vite build && npm run build:electron-main && npm run build:api",
+    "verify": "node scripts/verify-chains.mjs",
+    "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

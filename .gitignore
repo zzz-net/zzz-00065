@@ -19,6 +19,7 @@ exam-manager.db
 exam-manager.db-wal
 exam-manager.db-shm
 .verify-data
+.electron-runtime/
 
 # Editor directories and files
 .vscode/*

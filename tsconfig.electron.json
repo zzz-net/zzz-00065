@@ -12,8 +12,6 @@
     "strict": false
   },
   "include": [
-    "electron/main.ts",
-    "electron/preload.ts",
-    "electron/wizard.ts"
+    "electron/**/*.ts"
   ]
 }

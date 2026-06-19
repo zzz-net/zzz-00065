@@ -12,12 +12,11 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import * as wizard from './wizard.js'
+import * as ws from './workspace.js'
 
 interface AppConfig {
   dataDir: string
   serverPort: number
-  recentSessionId: number | null
-  recentSessionsByDir: Record<string, number | null>
   windowBounds: {
     width: number
     height: number
@@ -25,7 +24,17 @@ interface AppConfig {
     y?: number
     maximized?: boolean
   } | null
-  lastWizardCompleteByDir: Record<string, boolean>
+}
+
+const CONFIG_FILENAME = 'app-config.json'
+const APP_NAME = 'exam-session-manager'
+
+{
+  if (!app.isPackaged) {
+    const fb = path.join(process.cwd(), '.electron-runtime', 'userdata')
+    try { fs.mkdirSync(fb, { recursive: true }) } catch (_e) {}
+    try { app.setPath('userData', fb) } catch (_e) {}
+  }
 }
 
 let mainWindow: BrowserWindow | null = null
@@ -33,8 +42,6 @@ let serverProcess: ChildProcessWithoutNullStreams | null = null
 let config: AppConfig
 let backendReady = false
 let backendError: { code: string; message: string; detail?: string } | null = null
-
-const CONFIG_FILENAME = 'app-config.json'
 
 function getConfigPath(): string {
   return path.join(app.getPath('userData'), CONFIG_FILENAME)
@@ -48,10 +55,7 @@ function defaultConfig(): AppConfig {
   return {
     dataDir: getDefaultDataDir(),
     serverPort: 3001,
-    recentSessionId: null,
-    recentSessionsByDir: {},
     windowBounds: null,
-    lastWizardCompleteByDir: {},
   }
 }
 
@@ -64,7 +68,7 @@ function loadConfig(): AppConfig {
       return { ...defaultConfig(), ...parsed }
     }
   } catch (e) {
-    console.warn('Failed to load config, using defaults:', e)
+    ws.writeLog(getDefaultDataDir(), 'app', 'warn', '加载配置失败，使用默认值', e instanceof Error ? e.message : String(e))
   }
   return defaultConfig()
 }
@@ -76,94 +80,12 @@ function saveConfig() {
     if (!fs.existsSync(userDataDir)) {
       fs.mkdirSync(userDataDir, { recursive: true })
     }
-    fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2), 'utf-8')
+    const tmp = cfgPath + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8')
+    fs.renameSync(tmp, cfgPath)
   } catch (e) {
-    console.error('Failed to save config:', e)
+    ws.writeLog(getDefaultDataDir(), 'app', 'error', '保存配置失败', e instanceof Error ? e.message : String(e))
   }
-}
-
-function ensureDataDir(dir: string): { ok: boolean; error?: string } {
-  try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true })
-    }
-    const testFile = path.join(dir, `.write-test-${Date.now()}.tmp`)
-    fs.writeFileSync(testFile, 'test', 'utf-8')
-    fs.unlinkSync(testFile)
-    return { ok: true }
-  } catch (e: any) {
-    return {
-      ok: false,
-      error: e?.message || '未知错误',
-    }
-  }
-}
-
-interface LibraryState {
-  exists: boolean
-  isEmpty: boolean
-  hasValidSchema: boolean
-  dbPath: string
-  dbSize?: number
-  dbModified?: string
-}
-
-function detectLibraryState(dir: string): LibraryState {
-  const dbPath = path.join(dir, 'exam-manager.db')
-  const result: LibraryState = {
-    exists: false,
-    isEmpty: true,
-    hasValidSchema: false,
-    dbPath,
-  }
-
-  if (!fs.existsSync(dbPath)) {
-    return result
-  }
-
-  result.exists = true
-  try {
-    const stat = fs.statSync(dbPath)
-    result.dbSize = stat.size
-    result.dbModified = stat.mtime.toISOString()
-    if (stat.size > 0) {
-      result.isEmpty = false
-    }
-  } catch {}
-
-  try {
-    const buffer = fs.readFileSync(dbPath)
-    const header = buffer.slice(0, 16).toString('utf-8')
-    result.hasValidSchema = header.includes('SQLite')
-  } catch {
-    result.hasValidSchema = false
-  }
-
-  return result
-}
-
-function getRecentSessionForDir(dir: string): number | null {
-  return config.recentSessionsByDir?.[dir] ?? null
-}
-
-function setRecentSessionForDir(dir: string, sessionId: number | null) {
-  if (!config.recentSessionsByDir) {
-    config.recentSessionsByDir = {}
-  }
-  config.recentSessionsByDir[dir] = sessionId
-  saveConfig()
-}
-
-function isWizardCompleteForDir(dir: string): boolean {
-  return config.lastWizardCompleteByDir?.[dir] ?? false
-}
-
-function markWizardCompleteForDir(dir: string) {
-  if (!config.lastWizardCompleteByDir) {
-    config.lastWizardCompleteByDir = {}
-  }
-  config.lastWizardCompleteByDir[dir] = true
-  saveConfig()
 }
 
 function checkPortAvailable(port: number): Promise<boolean> {
@@ -174,7 +96,7 @@ function checkPortAvailable(port: number): Promise<boolean> {
       server.close()
       resolve(true)
     })
-    server.listen(port, '127.0.0.1')
+    server.listen(port)
   })
 }
 
@@ -256,7 +178,7 @@ function loadErrorPage() {
   if (!mainWindow) return
   const htmlPath = path.join(__dirname, '..', 'dist', 'index.html')
   if (fs.existsSync(htmlPath)) {
-    mainWindow.loadURL(`file://${htmlPath}?startup_error=1`)
+    mainWindow.loadURL(`file:///${htmlPath.replace(/\\/g, '/')}?startup_error=1`)
   } else {
     mainWindow.loadFile(htmlPath).catch(() => {})
   }
@@ -266,9 +188,36 @@ function loadWizardPage() {
   if (!mainWindow) return
   const htmlPath = path.join(__dirname, '..', 'dist', 'index.html')
   if (fs.existsSync(htmlPath)) {
-    mainWindow.loadURL(`file://${htmlPath}?wizard=1`)
+    mainWindow.loadURL(`file:///${htmlPath.replace(/\\/g, '/')}?wizard=1`)
   } else {
     mainWindow.loadFile(htmlPath).catch(() => {})
+  }
+}
+
+function resolveServerEntry(): { entry: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const compiledApi = path.join(__dirname, 'api', 'server.js')
+  if (fs.existsSync(compiledApi)) {
+    return {
+      entry: process.execPath,
+      args: [compiledApi],
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    }
+  }
+
+  const sourceApi = path.join(__dirname, '..', 'api', 'server.ts')
+  const tsxBin = path.join(__dirname, '..', 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx')
+  if (fs.existsSync(sourceApi) && fs.existsSync(tsxBin)) {
+    return {
+      entry: tsxBin,
+      args: [sourceApi],
+      env: { ...process.env },
+    }
+  }
+
+  return {
+    entry: process.execPath,
+    args: [compiledApi],
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   }
 }
 
@@ -277,13 +226,14 @@ function startServer(): Promise<void> {
     backendReady = false
     backendError = null
 
-    const dataDirCheck = ensureDataDir(config.dataDir)
-    if (!dataDirCheck.ok) {
+    const wsEnsure = ws.ensureWorkspaceStructure(config.dataDir)
+    if (!wsEnsure.ok) {
       backendError = {
         code: 'DATA_DIR_NOT_WRITABLE',
         message: `数据目录不可写：${config.dataDir}`,
-        detail: `请检查目录权限或更换数据目录。错误原因：${dataDirCheck.error}`,
+        detail: `请检查目录权限或更换数据目录。错误：${wsEnsure.error}（${wsEnsure.errorCode}）`,
       }
+      ws.writeLog(getDefaultDataDir(), 'app', 'error', '数据目录不可写', backendError.detail)
       mainWindow?.webContents.send('backend:error', backendError)
       reject(backendError)
       return
@@ -298,41 +248,23 @@ function startServer(): Promise<void> {
           message: `端口 ${config.serverPort} 已被占用，且未找到可用端口`,
           detail: `请在配置中修改端口，或关闭占用 ${config.serverPort} 的程序后重试。`,
         }
+        ws.writeLog(config.dataDir, 'app', 'error', '无可用端口', backendError.detail)
         mainWindow?.webContents.send('backend:error', backendError)
         reject(backendError)
         return
       }
+      ws.writeLog(config.dataDir, 'app', 'warn', `端口 ${config.serverPort} 不可用，已切换到 ${newPort}`)
       config.serverPort = newPort
       saveConfig()
     }
 
-    let serverEntry: string
-    let nodeArgs: string[]
-    let envExtra: Record<string, string> = {}
+    const { entry, args, env: envExtra } = resolveServerEntry()
 
-    if (fs.existsSync(path.join(__dirname, '..', 'api', 'server.ts'))) {
-      const tsxPath = path.join(__dirname, '..', 'node_modules', '.bin', 'tsx')
-      serverEntry = path.join(__dirname, '..', 'api', 'server.ts')
-      nodeArgs = [serverEntry]
-      if (process.platform === 'win32') {
-        serverEntry = tsxPath + '.cmd'
-        nodeArgs = [path.join(__dirname, '..', 'api', 'server.ts')]
-      } else {
-        serverEntry = tsxPath
-        nodeArgs = [path.join(__dirname, '..', 'api', 'server.ts')]
-      }
-    } else {
-      serverEntry = process.execPath
-      nodeArgs = [path.join(__dirname, 'api', 'server.js')]
-      envExtra = {
-        ELECTRON_RUN_AS_NODE: '1',
-      }
-    }
+    ws.writeLog(config.dataDir, 'app', 'info', `启动后端服务`, `entry=${entry} args=${args.join(' ')} port=${config.serverPort}`)
 
     try {
-      serverProcess = spawn(serverEntry, nodeArgs, {
+      serverProcess = spawn(entry, args, {
         env: {
-          ...process.env,
           ...envExtra,
           PORT: String(config.serverPort),
           DB_DIR: config.dataDir,
@@ -346,6 +278,7 @@ function startServer(): Promise<void> {
         message: '无法启动后端服务',
         detail: e?.message || '请确认依赖已正确安装（npm install）。',
       }
+      ws.writeLog(config.dataDir, 'app', 'error', 'spawn 后端失败', backendError.detail)
       mainWindow?.webContents.send('backend:error', backendError)
       reject(backendError)
       return
@@ -355,12 +288,16 @@ function startServer(): Promise<void> {
     let resolved = false
 
     serverProcess.stdout?.on('data', (data: Buffer) => {
-      const text = data.toString().trim()
-      console.log('[server]', text)
-      stdoutBuffer += text + '\n'
-      if (!resolved && text.includes(`Server ready`) || text.includes(`port ${config.serverPort}`) || text.includes(`localhost:${config.serverPort}`)) {
+      const text = data.toString()
+      const trimmed = text.trim()
+      if (trimmed.length) {
+        ws.writeLog(config.dataDir, 'server', 'info', trimmed)
+      }
+      stdoutBuffer += text
+      if (!resolved && (text.includes('Server ready') || text.includes(`port ${config.serverPort}`) || text.includes(`localhost:${config.serverPort}`))) {
         resolved = true
         backendReady = true
+        ws.writeLog(config.dataDir, 'app', 'success', '后端服务就绪', `port=${config.serverPort}`)
         mainWindow?.webContents.send('backend:ready', {
           port: config.serverPort,
           dataDir: config.dataDir,
@@ -370,36 +307,43 @@ function startServer(): Promise<void> {
     })
 
     serverProcess.stderr?.on('data', (data: Buffer) => {
-      const text = data.toString().trim()
-      console.error('[server-err]', text)
-      stdoutBuffer += text + '\n'
-      if (!resolved && (text.toLowerCase().includes('error') || text.toLowerCase().includes('eaddrinuse'))) {
-        if (text.toLowerCase().includes('eaddrinuse') || text.toLowerCase().includes('port')) {
+      const text = data.toString()
+      const trimmed = text.trim()
+      if (trimmed.length) {
+        ws.writeLog(config.dataDir, 'server', 'warn', trimmed)
+      }
+      stdoutBuffer += text
+      if (!resolved) {
+        const lower = text.toLowerCase()
+        if (lower.includes('eaddrinuse') || lower.includes('port')) {
           backendError = {
             code: 'PORT_NOT_AVAILABLE',
             message: `端口 ${config.serverPort} 已被占用`,
-            detail: text,
+            detail: trimmed.slice(0, 500),
           }
-        } else if (text.toLowerCase().includes('cannot find module') || text.toLowerCase().includes('module_not_found')) {
+        } else if (lower.includes('cannot find module') || lower.includes('module_not_found') || lower.includes('error: cannot')) {
           backendError = {
             code: 'DEPENDENCY_MISSING',
             message: '依赖缺失或模块未找到',
-            detail: text,
+            detail: trimmed.slice(0, 1000),
           }
-        } else {
+        } else if (lower.includes('error')) {
           backendError = {
             code: 'SERVER_UNKNOWN_ERROR',
             message: '后端服务启动失败',
-            detail: text,
+            detail: trimmed.slice(0, 1000),
           }
         }
-        mainWindow?.webContents.send('backend:error', backendError)
-        reject(backendError)
+        if (backendError) {
+          ws.writeLog(config.dataDir, 'app', 'error', `后端错误（${backendError.code}）`, backendError.detail)
+          mainWindow?.webContents.send('backend:error', backendError)
+          reject(backendError)
+        }
       }
     })
 
     serverProcess.on('error', (err) => {
-      console.error('Server spawn error:', err)
+      ws.writeLog(config.dataDir, 'app', 'error', 'Server spawn error', err?.message)
       if (!resolved) {
         backendError = {
           code: 'DEPENDENCY_MISSING',
@@ -412,12 +356,12 @@ function startServer(): Promise<void> {
     })
 
     serverProcess.on('exit', (code) => {
-      console.log('Server process exited with code:', code)
+      ws.writeLog(config.dataDir, 'app', 'warn', `后端进程退出`, `code=${code ?? 'unknown'}`)
       if (!resolved && !backendError) {
         backendError = {
           code: 'SERVER_EXITED',
           message: `后端进程意外退出（退出码: ${code ?? 'unknown'}）`,
-          detail: stdoutBuffer.slice(0, 2000),
+          detail: stdoutBuffer.slice(-2000),
         }
         mainWindow?.webContents.send('backend:error', backendError)
         reject(backendError)
@@ -431,6 +375,7 @@ function startServer(): Promise<void> {
           message: '后端服务启动超时',
           detail: '超过 30 秒仍未检测到服务就绪，请查看日志输出。',
         }
+        ws.writeLog(config.dataDir, 'app', 'error', '后端启动超时')
         mainWindow?.webContents.send('backend:error', backendError)
         reject(backendError)
       }
@@ -446,12 +391,29 @@ function stopServer() {
   backendReady = false
 }
 
+function getBackendStatusPayload() {
+  const libState = ws.detectLibraryState(config.dataDir)
+  const metaLoaded = ws.loadMeta(config.dataDir)
+  return {
+    ready: backendReady,
+    port: config.serverPort,
+    dataDir: config.dataDir,
+    error: backendError,
+    libraryState: libState,
+    workspaceMeta: metaLoaded.meta,
+    workspaceMetaOk: metaLoaded.ok,
+    workspaceMetaCorrupted: !!metaLoaded.corrupted,
+    wizardComplete: ws.isWizardComplete(config.dataDir),
+    recentLogFiles: ws.listRecentLogFiles(config.dataDir, 5),
+  }
+}
+
 function registerIpcHandlers() {
   ipcMain.handle('config:get', () => config)
 
   ipcMain.handle('config:set', async (_e, patch: Partial<AppConfig>) => {
     if (patch.dataDir != null && patch.dataDir !== config.dataDir) {
-      const check = ensureDataDir(patch.dataDir)
+      const check = ws.ensureDataDir(patch.dataDir)
       if (!check.ok) {
         return {
           success: false,
@@ -460,19 +422,20 @@ function registerIpcHandlers() {
         }
       }
 
-      const libState = detectLibraryState(patch.dataDir)
       const oldDir = config.dataDir
-
-      setRecentSessionForDir(oldDir, config.recentSessionId)
+      ws.setRecentSessionId(oldDir, ws.getRecentSessionId(oldDir))
 
       config = { ...config, ...patch }
-
-      const recentForNewDir = getRecentSessionForDir(patch.dataDir)
-      config.recentSessionId = recentForNewDir
-
       saveConfig()
 
-      const wizardComplete = isWizardCompleteForDir(patch.dataDir)
+      const wsResult = ws.ensureWorkspaceStructure(config.dataDir)
+      if (!wsResult.ok) {
+        return { success: false, error: wsResult.error, errorCode: wsResult.errorCode }
+      }
+
+      const libState = ws.detectLibraryState(config.dataDir)
+      const metaLoaded = ws.loadMeta(config.dataDir)
+      const wizardComplete = ws.isWizardComplete(config.dataDir)
 
       let trigger: wizard.WizardTrigger | null = null
       let reason = ''
@@ -490,14 +453,18 @@ function registerIpcHandlers() {
         }
       }
 
+      ws.writeLog(config.dataDir, 'app', 'info', '切换数据目录', `from=${oldDir} to=${config.dataDir} trigger=${trigger ?? 'none'}`)
+
       return {
         success: true,
         config,
         libraryState: libState,
+        workspaceMeta: metaLoaded.meta,
         needWizard: trigger != null,
         wizardTrigger: trigger,
         wizardReason: reason,
         wizardComplete,
+        createdWorkspaceFiles: wsResult.createdMeta || wsResult.createdLogs,
       }
     }
 
@@ -547,12 +514,13 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('system:checkDirWritable', (_e, dirPath: string) => {
-    return ensureDataDir(dirPath)
+    return ws.ensureDataDir(dirPath)
   })
 
   ipcMain.handle('backend:restart', async () => {
     stopServer()
     backendError = null
+    ws.writeLog(config.dataDir, 'app', 'info', '重启后端服务')
     try {
       await startServer()
       if (mainWindow) {
@@ -565,19 +533,7 @@ function registerIpcHandlers() {
     }
   })
 
-  ipcMain.handle('backend:status', () => {
-    const libState = detectLibraryState(config.dataDir)
-    return {
-      ready: backendReady,
-      port: config.serverPort,
-      dataDir: config.dataDir,
-      error: backendError,
-      recentSessionId: config.recentSessionId,
-      libraryState: libState,
-      wizardComplete: isWizardCompleteForDir(config.dataDir),
-      recentSessionsByDir: config.recentSessionsByDir,
-    }
-  })
+  ipcMain.handle('backend:status', () => getBackendStatusPayload())
 
   ipcMain.handle('shell:openDirectory', (_e, dirPath: string) => {
     return shell.openPath(dirPath)
@@ -592,22 +548,43 @@ function registerIpcHandlers() {
   })
 
   ipcMain.on('recent-session:set', (_e, sessionId: number | null) => {
-    config.recentSessionId = sessionId
-    setRecentSessionForDir(config.dataDir, sessionId)
+    ws.setRecentSessionId(config.dataDir, sessionId)
   })
 
-  ipcMain.handle('library:detectState', (_e, dir?: string) => {
-    return detectLibraryState(dir || config.dataDir)
+  ipcMain.handle('workspace:getMeta', (_e, dir?: string) => {
+    const targetDir = dir || config.dataDir
+    return ws.loadMeta(targetDir)
+  })
+
+  ipcMain.handle('workspace:saveMeta', (_e, patch: any, dir?: string) => {
+    const targetDir = dir || config.dataDir
+    return ws.saveMeta(targetDir, patch)
+  })
+
+  ipcMain.handle('workspace:detectState', (_e, dir?: string) => {
+    return ws.detectLibraryState(dir || config.dataDir)
+  })
+
+  ipcMain.handle('workspace:listLogs', (_e, dir?: string) => {
+    return ws.listRecentLogFiles(dir || config.dataDir, 10)
+  })
+
+  ipcMain.handle('workspace:readLogTail', (_e, filePath: string, maxLines: number = 200) => {
+    return ws.readLogTail(filePath, maxLines)
+  })
+
+  ipcMain.handle('workspace:ensureStructure', (_e, dir?: string) => {
+    return ws.ensureWorkspaceStructure(dir || config.dataDir)
   })
 
   ipcMain.handle('wizard:markComplete', (_e, dir?: string) => {
-    markWizardCompleteForDir(dir || config.dataDir)
-    return { success: true }
+    const targetDir = dir || config.dataDir
+    return ws.markWizardComplete(targetDir)
   })
 
   ipcMain.handle('workspace:switchAndInit', async (_e, newDir: string, dataAction: 'init-new' | 'use-existing' | 'migrate', sourceDbPath?: string) => {
     const oldDir = config.dataDir
-    setRecentSessionForDir(oldDir, config.recentSessionId)
+    ws.setRecentSessionId(oldDir, ws.getRecentSessionId(oldDir))
 
     const handleResult = await wizard.handleData(dataAction, sourceDbPath)
     if (handleResult.status !== 'success') {
@@ -619,14 +596,17 @@ function registerIpcHandlers() {
     }
 
     config.dataDir = newDir
-    config.recentSessionId = getRecentSessionForDir(newDir)
     saveConfig()
 
-    markWizardCompleteForDir(newDir)
+    ws.markWizardComplete(newDir)
+
+    const meta = ws.loadMeta(newDir)
+    ws.writeLog(newDir, 'app', 'info', '完成工作区切换并初始化', `action=${dataAction} from=${oldDir}`)
 
     return {
       success: true,
       config,
+      workspaceMeta: meta.meta,
       handleResult,
     }
   })
@@ -674,7 +654,7 @@ function registerIpcHandlers() {
   ipcMain.handle('wizard:complete', async () => {
     wizard.completeWizard()
     const state = wizard.getWizardState()
-    markWizardCompleteForDir(config.dataDir)
+    ws.markWizardComplete(config.dataDir)
     backendError = null
     stopServer()
     try {
@@ -684,8 +664,7 @@ function registerIpcHandlers() {
         mainWindow.loadURL(serverUrl).catch(() => {})
       }
     } catch (err: any) {
-      console.error('Start server after wizard failed:', err)
-      wizard.addLog('error', 'system', '向导完成后启动服务器失败', err?.message)
+      ws.writeLog(config.dataDir, 'app', 'error', '向导完成后启动服务器失败', err?.message)
     }
     return state
   })
@@ -698,21 +677,24 @@ function registerIpcHandlers() {
 
 app.whenReady().then(async () => {
   config = loadConfig()
+
+  ws.ensureWorkspaceStructure(config.dataDir)
+  ws.writeLog(config.dataDir, 'app', 'info', '应用启动', `version=${app.getVersion()} platform=${process.platform}`)
+
   registerIpcHandlers()
 
   wizard.initWizard(config, getConfigPath(), getDefaultDataDir())
 
+  startServer().catch((err) => {
+    ws.writeLog(config.dataDir, 'app', 'error', '初始启动后端失败', err?.message || String(err))
+  })
+
   const needWizard = wizard.checkNeedWizard()
   if (needWizard.need) {
     wizard.startWizard(needWizard.trigger)
-    wizard.addLog('info', 'welcome', `检测到需要启动向导: ${needWizard.reason}`)
-    createWindow()
-  } else {
-    startServer().catch((err) => {
-      console.error('Initial server start failed:', err)
-    })
-    createWindow()
+    ws.writeLog(config.dataDir, 'app', 'info', `启动向导触发: ${needWizard.reason}`)
   }
+  createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -722,6 +704,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  ws.writeLog(config.dataDir, 'app', 'info', '所有窗口关闭，准备退出')
   if (process.platform !== 'darwin') {
     stopServer()
     app.quit()

@@ -10,10 +10,12 @@ declare global {
         error?: string
         errorCode?: string
         libraryState?: { exists: boolean; isEmpty: boolean; hasValidSchema: boolean; dbPath: string; dbSize?: number; dbModified?: string }
+        workspaceMeta?: any
         needWizard?: boolean
         wizardTrigger?: string
         wizardReason?: string
         wizardComplete?: boolean
+        createdWorkspaceFiles?: boolean
       }>
       selectDirectory: () => Promise<any>
       showSaveDialog: (options: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) => Promise<any>
@@ -45,6 +47,12 @@ declare global {
       libraryDetectState: (dir?: string) => Promise<any>
       wizardMarkComplete: (dir?: string) => Promise<any>
       workspaceSwitchAndInit: (newDir: string, dataAction: 'init-new' | 'use-existing' | 'migrate', sourceDbPath?: string) => Promise<any>
+      workspaceGetMeta: (dir?: string) => Promise<any>
+      workspaceSaveMeta: (patch: any, dir?: string) => Promise<any>
+      workspaceDetectState: (dir?: string) => Promise<any>
+      workspaceListLogs: (dir?: string) => Promise<string[]>
+      workspaceReadLogTail: (filePath: string, maxLines?: number) => Promise<any>
+      workspaceEnsureStructure: (dir?: string) => Promise<any>
     }
   }
 }
@@ -96,4 +104,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   wizardMarkComplete: (dir?: string) => ipcRenderer.invoke('wizard:markComplete', dir),
   workspaceSwitchAndInit: (newDir: string, dataAction: 'init-new' | 'use-existing' | 'migrate', sourceDbPath?: string) =>
     ipcRenderer.invoke('workspace:switchAndInit', newDir, dataAction, sourceDbPath),
+  workspaceGetMeta: (dir?: string) => ipcRenderer.invoke('workspace:getMeta', dir),
+  workspaceSaveMeta: (patch: any, dir?: string) => ipcRenderer.invoke('workspace:saveMeta', patch, dir),
+  workspaceDetectState: (dir?: string) => ipcRenderer.invoke('workspace:detectState', dir),
+  workspaceListLogs: (dir?: string) => ipcRenderer.invoke('workspace:listLogs', dir),
+  workspaceReadLogTail: (filePath: string, maxLines?: number) =>
+    ipcRenderer.invoke('workspace:readLogTail', filePath, maxLines),
+  workspaceEnsureStructure: (dir?: string) => ipcRenderer.invoke('workspace:ensureStructure', dir),
 })

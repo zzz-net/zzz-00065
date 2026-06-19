@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as net from 'net'
 import { app } from 'electron'
+import * as ws from './workspace.js'
 
 export type WizardStep = 'welcome' | 'env-check' | 'dir-select' | 'data-handle' | 'session-restore' | 'complete'
 
@@ -58,10 +59,7 @@ export interface DataHandleResult {
 interface AppConfig {
   dataDir: string
   serverPort: number
-  recentSessionId: number | null
-  recentSessionsByDir: Record<string, number | null>
   windowBounds: { width: number; height: number; x?: number; y?: number; maximized?: boolean } | null
-  lastWizardCompleteByDir: Record<string, boolean>
 }
 
 let state: WizardState = {
@@ -80,8 +78,6 @@ let state: WizardState = {
 let config: AppConfig | null = null
 let configPath = ''
 let defaultDataDir = ''
-
-const CONFIG_FILENAME = 'app-config.json'
 
 export function initWizard(cfg: AppConfig, cfgPath: string, defDir: string) {
   config = cfg
@@ -108,40 +104,18 @@ export function addLog(
     detail,
   }
   state.logs.push(entry)
-  persistLogs()
-}
-
-function getLogDir(): string {
-  const dir = path.join(state.selectedDataDir || defaultDataDir, 'wizard-logs')
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-  return dir
-}
-
-function persistLogs() {
-  try {
-    const logDir = getLogDir()
-    const logFile = path.join(logDir, `wizard-${Date.now()}.json`)
-    fs.writeFileSync(logFile, JSON.stringify(state.logs, null, 2), 'utf-8')
-  } catch (e) {
-    console.warn('Failed to persist wizard logs:', e)
-  }
-}
-
-function isWizardCompleteForDir(dir: string): boolean {
-  return config?.lastWizardCompleteByDir?.[dir] ?? false
+  ws.writeLog(state.selectedDataDir || defaultDataDir, 'wizard', level as any, `[${step}] ${message}`, detail)
 }
 
 export function checkNeedWizard(): { need: boolean; trigger: WizardTrigger; reason?: string } {
   if (!config) return { need: false, trigger: 'first-run' }
 
   const configExists = fs.existsSync(configPath)
-  const dbPath = path.join(config.dataDir, 'exam-manager.db')
+  const dbPath = ws.getDbPath(config.dataDir)
   const dbExists = fs.existsSync(dbPath)
   const oldDataDir = path.join(process.cwd(), 'exam-manager.db')
   const oldDbExists = fs.existsSync(oldDataDir)
-  const wizardComplete = isWizardCompleteForDir(config.dataDir)
+  const wizardComplete = ws.isWizardComplete(config.dataDir)
 
   if (state.active) {
     return { need: true, trigger: state.trigger, reason: '向导正在进行中' }
@@ -181,7 +155,7 @@ export function startWizard(trigger: WizardTrigger = 'first-run') {
     envCheckResult: null,
     selectedDataDir: config?.dataDir || defaultDataDir,
     dataHandleResult: null,
-    restoreSessionId: config?.recentSessionId || null,
+    restoreSessionId: ws.getRecentSessionId(config?.dataDir || defaultDataDir),
     logs: [],
     completed: false,
   }
@@ -237,7 +211,7 @@ export async function runEnvCheck(): Promise<EnvCheckResult> {
 
   result.items.dataDirWritable.status = 'running'
   result.items.dataDirWritable.message = '正在检查目录...'
-  const dirCheck = ensureDataDir(state.selectedDataDir)
+  const dirCheck = ws.ensureDataDir(state.selectedDataDir)
   if (dirCheck.ok) {
     result.items.dataDirWritable.status = 'success'
     result.items.dataDirWritable.message = `目录 ${state.selectedDataDir} 可写`
@@ -302,15 +276,16 @@ export function setSelectedDataDir(dir: string) {
   addLog('info', 'dir-select', `选择数据目录: ${dir}`)
 }
 
-export async function checkDataDir(dir: string): Promise<{ ok: boolean; error?: string; hasExistingDb: boolean; dbPath: string }> {
-  const dbPath = path.join(dir, 'exam-manager.db')
-  const dirCheck = ensureDataDir(dir)
-  const hasExistingDb = fs.existsSync(dbPath)
+export async function checkDataDir(dir: string): Promise<{ ok: boolean; error?: string; hasExistingDb: boolean; dbPath: string; libState: ReturnType<typeof ws.detectLibraryState> }> {
+  const dbPath = ws.getDbPath(dir)
+  const dirCheck = ws.ensureDataDir(dir)
+  const libState = ws.detectLibraryState(dir)
   return {
     ok: dirCheck.ok,
     error: dirCheck.error,
-    hasExistingDb,
+    hasExistingDb: libState.exists,
     dbPath,
+    libState,
   }
 }
 
@@ -318,7 +293,7 @@ export async function handleData(
   action: 'migrate' | 'init-new' | 'use-existing',
   sourceDbPath?: string
 ): Promise<DataHandleResult> {
-  const targetDbPath = path.join(state.selectedDataDir, 'exam-manager.db')
+  const targetDbPath = ws.getDbPath(state.selectedDataDir)
 
   const result: DataHandleResult = {
     action,
@@ -350,7 +325,7 @@ export async function handleData(
         fs.copyFileSync(targetDbPath, backupPath)
         addLog('info', 'data-handle', `已备份现有数据库到: ${backupPath}`)
       }
-      ensureDataDir(state.selectedDataDir)
+      ws.ensureDataDir(state.selectedDataDir)
       result.status = 'success'
       result.message = '新数据库将在后端启动时自动初始化'
       addLog('success', 'data-handle', '新数据库初始化准备完成')
@@ -423,7 +398,7 @@ async function migrateDatabase(
 async function verifyDatabase(dbPath: string): Promise<string[]> {
   const tables: string[] = []
   try {
-    const initSqlJs = await import('sql.js')
+    const initSqlJs = await import('sql.js') as any
     const SQL = await initSqlJs.default()
     const buffer = fs.readFileSync(dbPath)
     const db = new SQL.Database(buffer)
@@ -435,27 +410,17 @@ async function verifyDatabase(dbPath: string): Promise<string[]> {
     }
     db.close()
   } catch (e) {
-    console.warn('Failed to verify database:', e)
+    addLog('warn', 'data-handle', '验证数据库失败，继续（后端启动时会再次校验）', e instanceof Error ? e.message : String(e))
   }
   return tables
 }
 
 export function setRestoreSession(sessionId: number | null) {
   state.restoreSessionId = sessionId
-  if (config && sessionId != null) {
-    config.recentSessionId = sessionId
-    saveConfig()
+  if (sessionId != null) {
+    ws.setRecentSessionId(state.selectedDataDir, sessionId)
   }
   addLog('info', 'session-restore', sessionId ? `设置恢复场次: ${sessionId}` : '不恢复场次')
-}
-
-function markWizardCompleteForDir(dir: string) {
-  if (!config) return
-  if (!config.lastWizardCompleteByDir) {
-    config.lastWizardCompleteByDir = {}
-  }
-  config.lastWizardCompleteByDir[dir] = true
-  saveConfig()
 }
 
 export function completeWizard() {
@@ -469,7 +434,10 @@ export function completeWizard() {
     if (state.envCheckResult?.resolvedPort) {
       config.serverPort = state.envCheckResult.resolvedPort
     }
-    markWizardCompleteForDir(state.selectedDataDir)
+    ws.markWizardComplete(state.selectedDataDir)
+    if (state.restoreSessionId != null) {
+      ws.setRecentSessionId(state.selectedDataDir, state.restoreSessionId)
+    }
     saveConfig()
   }
 }
@@ -477,20 +445,6 @@ export function completeWizard() {
 export function cancelWizard() {
   state.active = false
   addLog('warn', 'system', '向导已取消')
-}
-
-function ensureDataDir(dir: string): { ok: boolean; error?: string } {
-  try {
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true })
-    }
-    const testFile = path.join(dir, `.write-test-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`)
-    fs.writeFileSync(testFile, 'test', 'utf-8')
-    fs.unlinkSync(testFile)
-    return { ok: true }
-  } catch (e: any) {
-    return { ok: false, error: e?.code || e?.message || '未知错误' }
-  }
 }
 
 function checkPortAvailable(port: number): Promise<boolean> {
@@ -554,9 +508,11 @@ function saveConfig() {
     if (!fs.existsSync(userDataDir)) {
       fs.mkdirSync(userDataDir, { recursive: true })
     }
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+    const tmp = configPath + '.tmp'
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8')
+    fs.renameSync(tmp, configPath)
   } catch (e) {
-    console.error('Failed to save config from wizard:', e)
+    addLog('error', 'system', '保存配置失败', e instanceof Error ? e.message : String(e))
   }
 }
 
