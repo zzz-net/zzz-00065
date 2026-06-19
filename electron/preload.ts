@@ -29,4 +29,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pathJoin: (...parts: string[]) => ipcRenderer.invoke('path:join', parts),
   pathBasename: (p: string) => ipcRenderer.invoke('path:basename', p),
   getDefaultDataDir: () => ipcRenderer.invoke('config:getDefaultDataDir'),
+  setRecentSession: (sessionId: number | null) => ipcRenderer.send('recent-session:set', sessionId),
 })

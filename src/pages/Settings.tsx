@@ -94,17 +94,31 @@ export default function Settings() {
   }
 
   const handleSave = async () => {
-    if (!window.electronAPI) return
     setSaving(true)
     setSaveMsg(null)
     try {
-      const r = await window.electronAPI.setConfig({ dataDir, serverPort })
-      if (r.success) {
-        setSaveMsg({ type: 'success', text: '设置已保存。切换端口或数据目录需要重启后端服务。' })
-        loadSystemInfo()
-      } else {
-        setSaveMsg({ type: 'error', text: r.error || '保存失败' })
+      if (window.electronAPI) {
+        const r = await window.electronAPI.setConfig({ dataDir, serverPort })
+        if (!r.success) {
+          setSaveMsg({ type: 'error', text: r.error || '保存失败' })
+          setSaving(false)
+          return
+        }
       }
+      if (dataDir !== (systemInfo?.dataDir || '')) {
+        try {
+          await apiFetch('/api/system/data-directory/switch', {
+            method: 'POST',
+            body: JSON.stringify({ directory: dataDir }),
+          })
+        } catch (e: any) {
+          setSaveMsg({ type: 'error', text: `后端切换目录失败: ${e.message || '未知错误'}。配置已保存，重启后生效。` })
+          setSaving(false)
+          return
+        }
+      }
+      setSaveMsg({ type: 'success', text: '设置已保存。切换端口或数据目录需要重启后端服务。' })
+      loadSystemInfo()
     } catch (e: any) {
       setSaveMsg({ type: 'error', text: e.message || '保存失败' })
     } finally {
@@ -115,13 +129,15 @@ export default function Settings() {
   const handleRestart = async () => {
     if (!window.electronAPI) return
     setRestarting(true)
+    setSaveMsg(null)
     try {
       const r = await window.electronAPI.restartBackend()
       if (r.success) {
-        setSaveMsg({ type: 'success', text: '后端服务已重启' })
-        setTimeout(() => window.location.reload(), 1500)
+        setSaveMsg({ type: 'success', text: '后端服务已重启，页面即将刷新...' })
+        setTimeout(() => window.location.reload(), 2000)
       } else {
-        setSaveMsg({ type: 'error', text: '重启失败: ' + JSON.stringify(r.error) })
+        const errDetail = r.error?.message || r.error?.detail || JSON.stringify(r.error)
+        setSaveMsg({ type: 'error', text: `重启失败: ${errDetail}` })
       }
     } catch (e: any) {
       setSaveMsg({ type: 'error', text: e.message || '重启失败' })

@@ -41,6 +41,7 @@ declare global {
       pathJoin: (...parts: string[]) => Promise<string>
       pathBasename: (p: string) => Promise<string>
       getDefaultDataDir: () => Promise<string>
+      setRecentSession: (sessionId: number | null) => void
     }
   }
 }

@@ -102,10 +102,7 @@ export default function Sessions() {
 
   const openSession = async (id: number) => {
     if (window.electronAPI) {
-      try {
-        const cfg = await window.electronAPI.getConfig()
-        await window.electronAPI.setConfig({ ...cfg, recentSessionId: id })
-      } catch {}
+      window.electronAPI.setRecentSession(id)
     }
     navigate(`/sessions/${id}`)
   }

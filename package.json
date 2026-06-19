@@ -15,7 +15,8 @@
     "dev": "concurrently \"npm run client:dev\" \"npm run server:dev\"",
     "electron:dev": "vite build && tsc -p tsconfig.electron.json && electron .",
     "electron:start": "npm run build:all && electron .",
-    "build:all": "vite build && tsc -p tsconfig.electron.json && tsc --outDir dist-electron/api --rootDir api --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck --resolveJsonModule api/server.ts api/app.ts api/db.ts api/routes/operators.ts api/routes/rooms.ts api/routes/sessions.ts api/routes/students.ts api/routes/seats.ts api/routes/checkins.ts api/routes/anomalies.ts api/routes/audit.ts api/routes/export.ts api/routes/system.ts"
+    "build:all": "vite build && tsc -p tsconfig.electron.json && tsc --outDir dist-electron/api --rootDir api --module commonjs --moduleResolution node --target ES2020 --esModuleInterop --skipLibCheck --resolveJsonModule api/server.ts api/app.ts api/db.ts api/routes/operators.ts api/routes/rooms.ts api/routes/sessions.ts api/routes/students.ts api/routes/seats.ts api/routes/checkins.ts api/routes/anomalies.ts api/routes/audit.ts api/routes/export.ts api/routes/system.ts",
+    "verify": "node scripts/verify-chains.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

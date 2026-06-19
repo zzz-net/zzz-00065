@@ -46,8 +46,8 @@ router.post('/:sessionId/seats/auto', (req: Request, res: Response): void => {
   const shuffled = [...students].sort(() => Math.random() - 0.5);
   const db = getDB();
   let seatIdx = 0;
-  for (let row = 0; row < (session as any).seat_rows && seatIdx < shuffled.length; row++) {
-    for (let col = 0; col < (session as any).seat_cols && seatIdx < shuffled.length; col++) {
+  for (let row = 1; row <= (session as any).seat_rows && seatIdx < shuffled.length; row++) {
+    for (let col = 1; col <= (session as any).seat_cols && seatIdx < shuffled.length; col++) {
       db.run(
         'INSERT INTO seat_assignments (session_id, student_id, seat_row, seat_col) VALUES (?, ?, ?, ?)',
         [Number(sessionId), (shuffled[seatIdx] as any).id, row, col]
@@ -82,6 +82,19 @@ router.post('/:sessionId/seats/force-change', (req: Request, res: Response): voi
   const { studentId, toRow, toCol, reason } = req.body;
   if (!studentId || toRow == null || toCol == null || !reason) {
     res.status(400).json({ success: false, error: 'studentId, toRow, toCol, reason 必填' });
+    return;
+  }
+
+  const session = queryOne(
+    `SELECT s.*, r.seat_rows, r.seat_cols FROM sessions s JOIN rooms r ON s.room_id = r.id WHERE s.id = ?`,
+    [Number(sessionId)]
+  );
+  if (!session) {
+    res.status(404).json({ success: false, error: '场次不存在' });
+    return;
+  }
+  if (toRow < 1 || toRow > (session as any).seat_rows || toCol < 1 || toCol > (session as any).seat_cols) {
+    res.status(400).json({ success: false, error: `目标座位超出考场范围（行 1~${(session as any).seat_rows}，列 1~${(session as any).seat_cols}）` });
     return;
   }
 

@@ -36,5 +36,8 @@
   "include": [
     "src",
     "api"
+  ],
+  "exclude": [
+    "api/index.ts"
   ]
 }

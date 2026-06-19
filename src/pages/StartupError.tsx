@@ -174,7 +174,7 @@ export default function StartupError() {
                   </button>
                   {window.electronAPI && (
                     <button
-                      onClick={() => (window.location.hash = '#/settings')}
+                      onClick={() => (window.location.pathname = '/settings')}
                       className="flex items-center gap-2 px-5 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors"
                     >
                       <Settings className="w-4 h-4" />

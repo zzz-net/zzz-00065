@@ -49,6 +49,7 @@ export default function SessionDetail() {
   const [showForce, setShowForce] = useState(false)
   const [forceForm, setForceForm] = useState({ studentId: '', toRow: 1, toCol: 1, reason: '' })
   const [forceLoading, setForceLoading] = useState(false)
+  const [forceError, setForceError] = useState('')
 
   const [checkins, setCheckins] = useState<Checkin[]>([])
   const [checkinLoading, setCheckinLoading] = useState(false)
@@ -67,10 +68,7 @@ export default function SessionDetail() {
   useEffect(() => {
     ;(async () => {
       if (window.electronAPI && sessionId) {
-        try {
-          const cfg = await window.electronAPI.getConfig()
-          await window.electronAPI.setConfig({ ...cfg, recentSessionId: Number(sessionId) })
-        } catch {}
+        window.electronAPI.setRecentSession(Number(sessionId))
       }
     })()
   }, [sessionId])
@@ -165,12 +163,18 @@ export default function SessionDetail() {
 
   const handleForceChange = async () => {
     setForceLoading(true)
+    setForceError('')
+    if (forceForm.toRow < 1 || forceForm.toRow > session!.seat_rows || forceForm.toCol < 1 || forceForm.toCol > session!.seat_cols) {
+      setForceError(`目标座位超出范围（行 1~${session!.seat_rows}，列 1~${session!.seat_cols}）`)
+      setForceLoading(false)
+      return
+    }
     try {
       await apiFetch(`/api/sessions/${sessionId}/seats/force-change`, {
         method: 'POST', body: JSON.stringify({ studentId: Number(forceForm.studentId), toRow: forceForm.toRow, toCol: forceForm.toCol, reason: forceForm.reason }),
       })
-      setShowForce(false); setForceForm({ studentId: '', toRow: 1, toCol: 1, reason: '' }); fetchSeats(); fetchSeatChanges()
-    } catch (err: any) { setError(err.message) } finally { setForceLoading(false) }
+      setShowForce(false); setForceForm({ studentId: '', toRow: 1, toCol: 1, reason: '' }); setForceError(''); fetchSeats(); fetchSeatChanges()
+    } catch (err: any) { setForceError(err.message || '换座失败') } finally { setForceLoading(false) }
   }
 
   const handleUndoChange = async (changeId: number) => {
@@ -411,7 +415,7 @@ export default function SessionDetail() {
           <div className="flex gap-2 mb-4">
             <button onClick={handleAutoSeat} className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700">自动排座</button>
             {isAdmin() ? (
-              <button onClick={() => setShowForce(true)} className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">强制换座</button>
+              <button onClick={() => { setShowForce(true); setForceError('') }} className="bg-orange-500 text-white px-3 py-1.5 rounded text-sm hover:bg-orange-600">强制换座</button>
             ) : (
               <span className="bg-gray-300 text-gray-500 px-3 py-1.5 rounded text-sm cursor-not-allowed" title="仅管理员可强制换座">强制换座</span>
             )}
@@ -456,6 +460,7 @@ export default function SessionDetail() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
               <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
                 <h2 className="text-lg font-bold mb-4">强制换座</h2>
+                {forceError && <div className="mb-3 text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{forceError}</div>}
                 <div className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium mb-1">学员</label>

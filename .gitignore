@@ -18,6 +18,7 @@ release
 exam-manager.db
 exam-manager.db-wal
 exam-manager.db-shm
+.verify-data
 
 # Editor directories and files
 .vscode/*
