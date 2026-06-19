@@ -1,12 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { Building2, Calendar, ScrollText, Users, LogOut } from 'lucide-react'
+import { Building2, Calendar, ScrollText, Users, LogOut, Home, Settings } from 'lucide-react'
 import { useOperatorStore } from '@/store/operator'
 
 const navItems = [
+  { to: '/', label: '首页', icon: Home },
   { to: '/rooms', label: '考场管理', icon: Building2 },
   { to: '/sessions', label: '场次管理', icon: Calendar },
   { to: '/audit-logs', label: '审计日志', icon: ScrollText },
-  { to: '/operators', label: '操作员管理', icon: Users },
+  { to: '/operators', label: '操作员管理', icon: Users, role: 'admin' },
+  { to: '/settings', label: '系统设置', icon: Settings },
 ]
 
 export default function Layout() {
@@ -23,10 +25,13 @@ export default function Layout() {
           考试管理系统
         </div>
         <nav className="flex-1 py-2">
-          {navItems.map((item) => (
+          {navItems
+            .filter((item) => !item.role || item.role === operator?.role)
+            .map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === '/'}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-3 text-sm transition-colors ${
                   isActive ? 'bg-gray-700 text-white' : 'text-gray-300 hover:bg-gray-700/50 hover:text-white'

@@ -2,9 +2,8 @@ import initSqlJs, { type Database } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
 
-const DB_DIR = process.env.DB_DIR || process.cwd();
-const DB_PATH = path.resolve(DB_DIR, 'exam-manager.db');
-
+let dbDir: string = process.env.DB_DIR || process.cwd();
+let dbPath: string = path.resolve(dbDir, 'exam-manager.db');
 let db: Database;
 
 const TABLES = [
@@ -96,10 +95,50 @@ const TABLES = [
   )`,
 ];
 
+export function ensureDirectoryWritable(dirPath: string): { ok: boolean; error?: string } {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    const testFile = path.join(dirPath, `.write-test-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+    fs.writeFileSync(testFile, 'test', 'utf-8');
+    fs.unlinkSync(testFile);
+    return { ok: true };
+  } catch (e: any) {
+    return {
+      ok: false,
+      error: e?.code || e?.message || '未知错误',
+    };
+  }
+}
+
+export function setDataDirectory(newDir: string): { ok: boolean; error?: string } {
+  const check = ensureDirectoryWritable(newDir);
+  if (!check.ok) {
+    return check;
+  }
+  dbDir = newDir;
+  dbPath = path.resolve(dbDir, 'exam-manager.db');
+  return { ok: true };
+}
+
+export function getDataDirectory(): string {
+  return dbDir;
+}
+
+export function getDatabasePath(): string {
+  return dbPath;
+}
+
 export async function initDB() {
+  const dirCheck = ensureDirectoryWritable(dbDir);
+  if (!dirCheck.ok) {
+    throw new Error(`数据目录不可写 (${dbDir}): ${dirCheck.error}`);
+  }
+
   const SQL = await initSqlJs();
-  if (fs.existsSync(DB_PATH)) {
-    const buffer = fs.readFileSync(DB_PATH);
+  if (fs.existsSync(dbPath)) {
+    const buffer = fs.readFileSync(dbPath);
     db = new SQL.Database(buffer);
   } else {
     db = new SQL.Database();
@@ -122,7 +161,7 @@ export async function initDB() {
 export function saveDB() {
   const data = db.export();
   const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_PATH, buffer);
+  fs.writeFileSync(dbPath, buffer);
 }
 
 export function getDB(): Database {

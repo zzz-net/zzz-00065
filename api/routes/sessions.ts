@@ -28,6 +28,22 @@ router.post('/', (req: Request, res: Response): void => {
     res.status(404).json({ success: false, error: '考场不存在' });
     return;
   }
+  const duplicate = queryOne(
+    'SELECT id FROM sessions WHERE name = ? AND exam_date = ? AND start_time = ?',
+    [name, examDate, startTime]
+  );
+  if (duplicate) {
+    res.status(409).json({
+      success: false,
+      error: `已存在同名场次：名称「${name}」、考试日期「${examDate}」、开始时间「${startTime}」完全一致，请修改后重试。`,
+      conflict: {
+        type: 'duplicate_session',
+        existingId: duplicate.id,
+        fields: { name, examDate, startTime },
+      },
+    });
+    return;
+  }
   const info = queryRun(
     'INSERT INTO sessions (room_id, name, exam_date, start_time) VALUES (?, ?, ?, ?)',
     [roomId, name, examDate, startTime]

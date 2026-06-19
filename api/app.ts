@@ -6,7 +6,6 @@ import express, {
 import cors from 'cors'
 import dotenv from 'dotenv'
 import path from 'path'
-import { fileURLToPath } from 'url'
 import { initDB } from './db.js'
 import operatorRoutes from './routes/operators.js'
 import roomRoutes from './routes/rooms.js'
@@ -17,6 +16,7 @@ import checkinRoutes from './routes/checkins.js'
 import anomalyRoutes from './routes/anomalies.js'
 import auditRoutes from './routes/audit.js'
 import exportRoutes from './routes/export.js'
+import systemRoutes from './routes/system.js'
 
 dotenv.config()
 
@@ -50,6 +50,8 @@ app.use('/api/sessions', checkinRoutes)
 app.use('/api/sessions', anomalyRoutes)
 app.use('/api/sessions', exportRoutes)
 app.use('/api/audit-logs', auditRoutes)
+app.use('/api', systemRoutes)
+app.use('/api', exportRoutes)
 
 app.use(
   '/api/health',
@@ -62,9 +64,11 @@ app.use(
 )
 
 if (process.env.ELECTRON_RUN === '1') {
-  const __filename = fileURLToPath(import.meta.url)
-  const __dirname = path.dirname(__filename)
-  const clientDist = path.resolve(__dirname, '..', 'dist')
+  const __dirname_compat =
+    typeof __dirname !== 'undefined'
+      ? __dirname
+      : path.resolve(process.cwd(), 'api')
+  const clientDist = path.resolve(__dirname_compat, '..', 'dist')
   app.use(express.static(clientDist))
   app.get('*', (_req: Request, res: Response) => {
     res.sendFile(path.join(clientDist, 'index.html'))

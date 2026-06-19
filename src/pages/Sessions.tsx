@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiFetch } from '@/store/operator'
-import { Plus, Eye, Trash2 } from 'lucide-react'
+import { apiFetch, ApiError } from '@/store/operator'
+import { Plus, Eye, Trash2, AlertTriangle, ArrowRight } from 'lucide-react'
 
 interface Session {
   id: number
@@ -39,6 +39,8 @@ export default function Sessions() {
   const [examDate, setExamDate] = useState('')
   const [startTime, setStartTime] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [formError, setFormError] = useState('')
+  const [conflictInfo, setConflictInfo] = useState<any>(null)
   const navigate = useNavigate()
 
   const fetchSessions = () => {
@@ -66,6 +68,8 @@ export default function Sessions() {
     e.preventDefault()
     if (!name || !roomId || !examDate || !startTime) return
     setSubmitting(true)
+    setFormError('')
+    setConflictInfo(null)
     try {
       await apiFetch('/api/sessions', {
         method: 'POST',
@@ -77,7 +81,12 @@ export default function Sessions() {
       setExamDate('')
       setStartTime('')
       fetchSessions()
-    } catch {
+    } catch (err: any) {
+      const apiErr = err as ApiError
+      setFormError(apiErr.message || '创建失败')
+      if (apiErr.status === 409 && apiErr.conflict) {
+        setConflictInfo(apiErr.conflict)
+      }
     } finally {
       setSubmitting(false)
     }
@@ -89,6 +98,23 @@ export default function Sessions() {
       await apiFetch(`/api/sessions/${id}`, { method: 'DELETE' })
       fetchSessions()
     } catch {}
+  }
+
+  const openSession = async (id: number) => {
+    if (window.electronAPI) {
+      try {
+        const cfg = await window.electronAPI.getConfig()
+        await window.electronAPI.setConfig({ ...cfg, recentSessionId: id })
+      } catch {}
+    }
+    navigate(`/sessions/${id}`)
+  }
+
+  const goToExisting = () => {
+    if (conflictInfo?.existingId) {
+      setShowModal(false)
+      openSession(conflictInfo.existingId)
+    }
   }
 
   return (
@@ -135,7 +161,7 @@ export default function Sessions() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => navigate(`/sessions/${s.id}`)}
+                        onClick={() => openSession(s.id)}
                         className="flex items-center gap-1 text-blue-600 hover:text-blue-800 text-sm"
                       >
                         <Eye size={14} />
@@ -166,6 +192,24 @@ export default function Sessions() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
             <h2 className="text-lg font-bold mb-4">新增场次</h2>
+            {formError && (
+              <div className={`mb-4 text-sm px-3 py-2.5 rounded font-medium ${conflictInfo ? 'bg-orange-50 text-orange-800 border border-orange-200' : 'bg-red-50 text-red-700'}`}>
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <div>{formError}</div>
+                    {conflictInfo && (
+                      <button
+                        onClick={goToExisting}
+                        className="mt-2 inline-flex items-center gap-1 text-xs text-orange-700 hover:text-orange-900 underline"
+                      >
+                        跳转至已存在的场次 <ArrowRight size={12} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <form onSubmit={handleCreate} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">名称</label>

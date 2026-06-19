@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { apiFetch, useOperatorStore } from '@/store/operator'
-import { ArrowLeft, Upload, Trash2, Undo2, AlertTriangle, Download } from 'lucide-react'
+import { apiFetch, ApiError, useOperatorStore } from '@/store/operator'
+import { ArrowLeft, Upload, Trash2, Undo2, AlertTriangle, Download, Save, AlertCircle, Play } from 'lucide-react'
 
 interface Session {
   id: number; name: string; status: string; room_name: string
@@ -61,6 +61,19 @@ export default function SessionDetail() {
   const [closeReason, setCloseReason] = useState('')
 
   const [exportData, setExportData] = useState<any>(null)
+  const [exportMsg, setExportMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [exportSaving, setExportSaving] = useState(false)
+
+  useEffect(() => {
+    ;(async () => {
+      if (window.electronAPI && sessionId) {
+        try {
+          const cfg = await window.electronAPI.getConfig()
+          await window.electronAPI.setConfig({ ...cfg, recentSessionId: Number(sessionId) })
+        } catch {}
+      }
+    })()
+  }, [sessionId])
 
   const fetchSession = () => {
     apiFetch<Session>(`/api/sessions/${sessionId}`)
@@ -126,7 +139,18 @@ export default function SessionDetail() {
         method: 'POST', body: JSON.stringify({ students: studentArr }),
       })
       setShowImport(false); setImportText(''); fetchStudents()
-    } catch (err: any) { setImportError(err.message) } finally { setImporting(false) }
+    } catch (err: any) {
+      const apiErr = err as ApiError
+      let msg = apiErr.message || '导入失败'
+      if (apiErr.status === 409 && apiErr.conflict) {
+        const c = apiErr.conflict
+        const parts = []
+        if (c.inBatch?.length) parts.push(`本批内重复 ${c.inBatch.length} 个`)
+        if (c.inExisting?.length) parts.push(`与现有重复 ${c.inExisting.length} 个`)
+        if (parts.length) msg += `（${parts.join('，')}）`
+      }
+      setImportError(msg)
+    } finally { setImporting(false) }
   }
 
   const handleDeleteStudent = async (studentId: number) => {
@@ -182,15 +206,78 @@ export default function SessionDetail() {
   }
 
   const handleExportJson = async () => {
+    setExportMsg(null)
     try {
-      const res = await apiFetch(`/api/sessions/${sessionId}/export`)
-      if (res.data) {
-        const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a'); a.href = url; a.download = `session-${sessionId}-export.json`; a.click()
-        URL.revokeObjectURL(url)
+      if (window.electronAPI) {
+        const defaultName = session
+          ? `session-${sessionId}-${session.name.replace(/[\\/:*?"<>|]/g, '_')}-${new Date().toISOString().slice(0, 10)}.json`
+          : `session-${sessionId}-export.json`
+        const dlg = await window.electronAPI.showSaveDialog({
+          title: '导出场次数据',
+          defaultPath: defaultName,
+          filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+        })
+        if (dlg.canceled || !dlg.filePath) return
+
+        setExportSaving(true)
+        try {
+          const r = await apiFetch(`/api/sessions/${sessionId}/export/save`, {
+            method: 'POST',
+            body: JSON.stringify({ filePath: dlg.filePath, overwrite: false }),
+          })
+          if (r.success) {
+            const d = r.data as any
+            setExportMsg({
+              type: 'success',
+              text: `导出成功：已保存 ${d.bytes} 字节到 ${d.filePath}（${d.studentsCount} 学员，${d.anomaliesCount} 异常记录）`,
+            })
+            fetchExport()
+          }
+        } catch (err: any) {
+          const apiErr = err as ApiError
+          if (apiErr.status === 409 && apiErr.conflict?.type === 'file_exists') {
+            const c = apiErr.conflict
+            const size = (c.fileSize / 1024).toFixed(2)
+            const mb = await window.electronAPI.showMessageBox({
+              type: 'warning',
+              title: '文件已存在',
+              message: `目标文件已存在，是否覆盖？\n\n文件: ${c.filePath}\n大小: ${size} KB\n修改时间: ${new Date(c.modifiedAt).toLocaleString()}`,
+              buttons: ['取消', '覆盖保存'],
+            })
+            if (mb.response === 1) {
+              const r2 = await apiFetch(`/api/sessions/${sessionId}/export/save`, {
+                method: 'POST',
+                body: JSON.stringify({ filePath: dlg.filePath, overwrite: true }),
+              })
+              if (r2.success) {
+                const d = r2.data as any
+                setExportMsg({
+                  type: 'success',
+                  text: `导出成功：已覆盖保存 ${d.bytes} 字节到 ${d.filePath}`,
+                })
+                fetchExport()
+              }
+            } else {
+              setExportMsg({ type: 'error', text: '已取消：用户未选择覆盖' })
+            }
+          } else {
+            setExportMsg({ type: 'error', text: apiErr.message || '导出失败' })
+          }
+        } finally {
+          setExportSaving(false)
+        }
+      } else {
+        const res = await apiFetch(`/api/sessions/${sessionId}/export`)
+        if (res.data) {
+          const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a'); a.href = url; a.download = `session-${sessionId}-export.json`; a.click()
+          URL.revokeObjectURL(url)
+        }
       }
-    } catch (err: any) { setError(err.message) }
+    } catch (err: any) {
+      setExportMsg({ type: 'error', text: err.message || '导出失败' })
+    }
   }
 
   if (loading) return <div className="p-6 text-gray-500">加载中...</div>
@@ -231,6 +318,49 @@ export default function SessionDetail() {
       )}
 
       {error && <div className="mb-4 text-sm text-red-600 bg-red-50 px-3 py-2 rounded">{error}</div>}
+
+      {window.electronAPI && (
+        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-4 mb-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-indigo-900 text-sm flex items-center gap-1.5">
+              <Play size={14} /> 桌面端主流程快捷入口
+            </h3>
+            <span className="text-xs text-indigo-600 opacity-80">
+              步骤 {Math.min(currentIdx + 1, STATUS_FLOW.length)} / {STATUS_FLOW.length}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {[
+              { label: '1. 导入学员名单', tab: 0, enabled: true, icon: <Upload size={14} />, active: students.length === 0, done: students.length > 0 },
+              { label: '2. 自动排座', tab: 1, enabled: students.length > 0, icon: <span className="text-sm font-bold">座</span>, active: seats.length === 0 && students.length > 0, done: seats.length > 0 },
+              { label: '3. 强制换座/撤销', tab: 1, enabled: isAdmin() && seats.length > 0, icon: <Undo2 size={14} />, active: false, done: seatChanges.filter((c) => !c.undone).length > 0 },
+              { label: '4. 签到/异常/导出', tab: activeTab >= 2 ? activeTab : 2, enabled: seats.length > 0, icon: <Download size={14} />, active: false, done: exportData != null },
+            ].map((step, i) => (
+              <button
+                key={i}
+                disabled={!step.enabled}
+                onClick={() => setActiveTab(step.tab)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                  step.done
+                    ? 'bg-green-100 text-green-800 border border-green-200 hover:bg-green-200'
+                    : step.active
+                    ? 'bg-blue-100 text-blue-800 border border-blue-300 hover:bg-blue-200 shadow-sm'
+                    : step.enabled
+                    ? 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-50'
+                    : 'bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed'
+                }`}
+              >
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                  step.done ? 'bg-green-500 text-white' : step.active ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'
+                }`}>
+                  {step.done ? '✓' : step.icon}
+                </span>
+                <span>{step.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex border-b mb-4">
         {TABS.map((tab, i) => (
@@ -454,8 +584,33 @@ export default function SessionDetail() {
 
       {activeTab === 4 && (
         <div>
+          {exportMsg && (
+            <div className={`mb-4 p-3 rounded-lg text-sm flex items-start gap-2 ${
+              exportMsg.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200'
+                                            : 'bg-red-50 text-red-800 border border-red-200'
+            }`}>
+              {exportMsg.type === 'success' ? <Save size={16} className="mt-0.5 shrink-0" /> : <AlertCircle size={16} className="mt-0.5 shrink-0" />}
+              <span className="flex-1">{exportMsg.text}</span>
+            </div>
+          )}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+            <h3 className="font-bold text-blue-900 mb-2 text-sm">桌面端导出说明</h3>
+            <ul className="text-xs text-blue-800 space-y-1">
+              <li>• 点击下方按钮可选择导出路径和文件名</li>
+              <li>• 导出的 JSON 文件包含：场次信息、考场配置、学员名单（含座位和签到状态）、异常记录</li>
+              <li>• 如果目标文件已存在，系统会提示是否覆盖，不会悄悄覆盖已有文件</li>
+              <li>• 每次导出操作都会写入审计日志，便于追溯</li>
+            </ul>
+          </div>
           <div className="flex gap-3 mb-4">
-            <button onClick={handleExportJson} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700"><Download size={14} /> 导出JSON</button>
+            <button onClick={handleExportJson} disabled={exportSaving} className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700 disabled:opacity-50">
+              <Save size={14} /> {exportSaving ? '保存中...' : (window.electronAPI ? '导出到文件...' : '导出JSON')}
+            </button>
+            {window.electronAPI && exportData?.session && (
+              <button onClick={handleExportJson} className="flex items-center gap-1 bg-gray-100 text-gray-700 px-3 py-1.5 rounded text-sm hover:bg-gray-200">
+                <Download size={14} /> 重新下载
+              </button>
+            )}
           </div>
           {exportData ? (
             <>

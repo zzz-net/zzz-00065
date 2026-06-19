@@ -12,6 +12,7 @@
     "strict": false
   },
   "include": [
-    "electron/main.ts"
+    "electron/main.ts",
+    "electron/preload.ts"
   ]
 }

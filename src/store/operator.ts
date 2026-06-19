@@ -19,7 +19,13 @@ export const useOperatorStore = create<OperatorStore>((set, get) => ({
   isAdmin: () => get().operator?.role === 'admin',
 }))
 
-export async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<{ success: boolean; data?: T; error?: string }> {
+export interface ApiError extends Error {
+  status?: number
+  conflict?: any
+  raw?: any
+}
+
+export async function apiFetch<T = any>(url: string, options?: RequestInit): Promise<{ success: boolean; data?: T; error?: string; conflict?: any; raw?: any }> {
   const operatorId = useOperatorStore.getState().operator?.id
   const headers: any = {
     'Content-Type': 'application/json',
@@ -29,9 +35,16 @@ export async function apiFetch<T = any>(url: string, options?: RequestInit): Pro
     headers['X-Operator-Id'] = String(operatorId)
   }
   const res = await fetch(url, { ...options, headers })
-  const json = await res.json()
+  let json: any = {}
+  try {
+    json = await res.json()
+  } catch {}
   if (!res.ok) {
-    throw new Error(json.error || `请求失败: ${res.status}`)
+    const err = new Error(json.error || `请求失败: ${res.status}`) as ApiError
+    err.status = res.status
+    err.conflict = json.conflict
+    err.raw = json
+    throw err
   }
   return json
 }

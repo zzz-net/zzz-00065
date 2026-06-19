@@ -23,37 +23,61 @@ router.post('/:sessionId/students/import', (req: Request, res: Response): void =
     return;
   }
 
-  const session = queryOne('SELECT id FROM sessions WHERE id = ?', [Number(sessionId)]);
+  const session = queryOne('SELECT id, name FROM sessions WHERE id = ?', [Number(sessionId)]);
   if (!session) {
     res.status(404).json({ success: false, error: '场次不存在' });
     return;
   }
 
   const batchRegNos = students.map((s: any) => s.regNo);
-  const seen = new Set<string>();
-  const duplicates: string[] = [];
-  for (const regNo of batchRegNos) {
-    if (seen.has(regNo)) {
-      if (!duplicates.includes(regNo)) duplicates.push(regNo);
+  const seen = new Map<string, number[]>();
+  const duplicatesInBatch: string[] = [];
+  batchRegNos.forEach((regNo, idx) => {
+    if (!seen.has(regNo)) {
+      seen.set(regNo, []);
     }
-    seen.add(regNo);
-  }
+    seen.get(regNo)!.push(idx + 1);
+    if (seen.get(regNo)!.length === 2) {
+      duplicatesInBatch.push(regNo);
+    }
+  });
 
   const existingStudents = queryAll(
-    'SELECT reg_no FROM students WHERE session_id = ?',
+    'SELECT reg_no, name FROM students WHERE session_id = ?',
     [Number(sessionId)]
   );
-  const existingRegNos = new Set(existingStudents.map((s: any) => s.reg_no));
+  const existingMap = new Map(existingStudents.map((s: any) => [s.reg_no, s.name]));
+  const duplicatesWithExisting: string[] = [];
   for (const regNo of batchRegNos) {
-    if (existingRegNos.has(regNo) && !duplicates.includes(regNo)) {
-      duplicates.push(regNo);
+    if (existingMap.has(regNo) && !duplicatesWithExisting.includes(regNo)) {
+      duplicatesWithExisting.push(regNo);
     }
   }
 
-  if (duplicates.length > 0) {
+  if (duplicatesInBatch.length > 0 || duplicatesWithExisting.length > 0) {
+    const reasons: string[] = [];
+    if (duplicatesInBatch.length > 0) {
+      const detail = duplicatesInBatch.map((r) => {
+        const lines = seen.get(r)!;
+        return `「${r}」出现在第 ${lines.join('、')} 行`;
+      }).join('；');
+      reasons.push(`本批内报名号重复：${detail}`);
+    }
+    if (duplicatesWithExisting.length > 0) {
+      const detail = duplicatesWithExisting.map((r) => {
+        return `「${r}（${existingMap.get(r) || '已存在学员'}）」`;
+      }).join('、');
+      reasons.push(`与场次「${(session as any).name}」现有学员报名号重复：${detail}`);
+    }
     res.status(409).json({
       success: false,
-      error: `报名号重复: ${duplicates.join(', ')}`,
+      error: `报名号冲突：${reasons.join('。')}。为避免污染数据，已全部拒绝，请修正后重新导入。`,
+      conflict: {
+        type: 'duplicate_reg_no',
+        sessionId: Number(sessionId),
+        inBatch: duplicatesInBatch,
+        inExisting: duplicatesWithExisting,
+      },
     });
     return;
   }
